@@ -111,6 +111,8 @@ Future<void> ensureDb(Database db) async {
   if (!businessCols.any((x) => x['name'].toString() == 'language')) {
     await db.execute('ALTER TABLE business ADD COLUMN language TEXT DEFAULT "English"');
   }
+  final salesCols = await db.rawQuery('PRAGMA table_info(sales)');
+  if (!salesCols.any((x) => x['name'].toString() == 'place_of_supply')) await db.execute('ALTER TABLE sales ADD COLUMN place_of_supply TEXT DEFAULT ""');
   final saleItemCols = await db.rawQuery('PRAGMA table_info(sale_items)');
   if (!saleItemCols.any((x) => x['name'].toString() == 'cost')) {
     await db.execute('ALTER TABLE sale_items ADD COLUMN cost REAL DEFAULT 0');
@@ -1350,45 +1352,56 @@ class InventoryPage extends StatelessWidget {
   final VoidCallback refresh;
   const InventoryPage(this.db, this.refresh, {super.key});
 
+  Widget _card(String title, String value, IconData icon) => Card(
+    child: ListTile(
+      leading: CircleAvatar(backgroundColor: const Color(0xFFEEF0FF), child: Icon(icon, color: const Color(0xFF5B5CE2))),
+      title: Text(title, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
+      subtitle: Text(value, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Inventory', style: TextStyle(fontWeight: FontWeight.w900)),
-        actions: [IconButton(onPressed: () => productDialog(context, db, onSaved: refresh), icon: const Icon(Icons.add_circle_rounded))],
+        actions: [
+          IconButton(onPressed: () => stockSummaryPdf(context, db), icon: const Icon(Icons.picture_as_pdf_rounded)),
+          IconButton(onPressed: () => productDialog(context, db, onSaved: refresh), icon: const Icon(Icons.add_circle_rounded)),
+        ],
       ),
       body: FutureBuilder<List<Map<String, Object?>>>(
         future: db.query('products', orderBy: 'name'),
         builder: (context, snapshot) {
           if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
           final rows = snapshot.data!;
-          if (rows.isEmpty) return Padding(padding: const EdgeInsets.all(18), child: emptyState('No products', 'Add KG, PCS, GM, Litre, Box and other units.'));
-          return ListView.builder(
+          if (rows.isEmpty) return Padding(padding: const EdgeInsets.all(18), child: emptyState('No products', 'Add products to start tracking stock.'));
+          final totalUnits = rows.fold<double>(0, (s, x) => s + (((x['qty'] as num?) ?? 0).toDouble()));
+          final costValue = rows.fold<double>(0, (s, x) => s + (((x['qty'] as num?) ?? 0).toDouble() * ((x['buy'] as num?) ?? 0).toDouble()));
+          final retailValue = rows.fold<double>(0, (s, x) => s + (((x['qty'] as num?) ?? 0).toDouble() * ((x['sell'] as num?) ?? 0).toDouble()));
+          final low = rows.where((x) => ((x['qty'] as num?) ?? 0) <= ((x['min_qty'] as num?) ?? 0)).length;
+          return ListView(
             padding: const EdgeInsets.all(18),
-            itemCount: rows.length,
-            itemBuilder: (context, index) {
-              final x = rows[index];
-              final qty = (x['qty'] as num?) ?? 0;
-              final low = qty <= ((x['min_qty'] as num?) ?? 0);
-              return Card(
-                child: ListTile(
-                  leading: CircleAvatar(
-                    backgroundColor: low ? const Color(0xFFFFE8E8) : const Color(0xFFEEF0FF),
-                    child: Icon(Icons.inventory_2_rounded, color: low ? Colors.red : const Color(0xFF5B5CE2)),
-                  ),
+            children: [
+              Row(children: [Expanded(child: _card('Products', rows.length.toString(), Icons.inventory_2_rounded)), const SizedBox(width: 8), Expanded(child: _card('Low Stock', low.toString(), Icons.warning_amber_rounded))]),
+              Row(children: [Expanded(child: _card('Stock @ Cost', pdfMoney(costValue), Icons.payments_rounded)), const SizedBox(width: 8), Expanded(child: _card('Retail Value', pdfMoney(retailValue), Icons.sell_rounded))]),
+              Card(child: ListTile(leading: const Icon(Icons.scale_rounded), title: const Text('Total Quantity', style: TextStyle(fontWeight: FontWeight.w800)), trailing: Text(totalUnits.toStringAsFixed(2), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)))),
+              const SizedBox(height: 8),
+              ...rows.map((x) {
+                final qty = (x['qty'] as num?) ?? 0;
+                final isLow = qty <= ((x['min_qty'] as num?) ?? 0);
+                final value = qty * ((x['buy'] as num?) ?? 0);
+                return Card(child: ListTile(
+                  leading: CircleAvatar(backgroundColor: isLow ? const Color(0xFFFFE8E8) : const Color(0xFFEEF0FF), child: Icon(Icons.inventory_2_rounded, color: isLow ? Colors.red : const Color(0xFF5B5CE2))),
                   title: Text(x['name'].toString(), style: const TextStyle(fontWeight: FontWeight.w800)),
-                  subtitle: Text(x['unit'].toString() + ' • GST ' + x['gst'].toString() + '% • HSN ' + x['hsn'].toString()),
-                  trailing: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(qty.toStringAsFixed(2) + ' ' + x['unit'].toString(), style: const TextStyle(fontWeight: FontWeight.w900)),
-                      Text(money((x['sell'] as num?) ?? 0), style: const TextStyle(fontSize: 10)),
-                    ],
-                  ),
-                ),
-              );
-            },
+                  subtitle: Text(x['unit'].toString() + ' • HSN ' + x['hsn'].toString() + ' • GST ' + x['gst'].toString() + '%'),
+                  trailing: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.end, children: [
+                    Text(qty.toStringAsFixed(2) + ' ' + x['unit'].toString(), style: const TextStyle(fontWeight: FontWeight.w900)),
+                    Text('Value ' + pdfMoney(value), style: const TextStyle(fontSize: 10)),
+                  ]),
+                ));
+              }),
+            ],
           );
         },
       ),
