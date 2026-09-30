@@ -14,6 +14,7 @@ import 'package:printing/printing.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:local_auth/local_auth.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'backup_service.dart';
 
 final ValueNotifier<String> appLanguage = ValueNotifier<String>('English');
@@ -1475,6 +1476,243 @@ class PartiesPage extends StatefulWidget {
   State<PartiesPage> createState() => _PartiesPageState();
 }
 
+class CustomerRating {
+  final double onTimePercent;
+  final int completedInvoices;
+  final int onTimeInvoices;
+  final int lateInvoices;
+  final double currentDue;
+  final int overdueDays;
+  final int stars;
+  final String label;
+
+  const CustomerRating({
+    required this.onTimePercent,
+    required this.completedInvoices,
+    required this.onTimeInvoices,
+    required this.lateInvoices,
+    required this.currentDue,
+    required this.overdueDays,
+    required this.stars,
+    required this.label,
+  });
+}
+
+DateTime? _parseDate(String? value) {
+  if (value == null || value.trim().isEmpty) return null;
+  return DateTime.tryParse(value.trim());
+}
+
+Future<CustomerRating> calculateCustomerRating(Database db, Map<String, Object?> party) async {
+  final partyId = party['id'] as int;
+  final creditDays = (party['credit_days'] as num?)?.toInt() ?? 0;
+  final sales = await db.query('sales', where: 'party_id=?', whereArgs: [partyId], orderBy: 'date ASC, id ASC');
+  final payments = await db.query('payments', where: 'party_id=? AND type=?', whereArgs: [partyId, 'IN'], orderBy: 'date ASC, id ASC');
+
+  final remaining = <int, double>{};
+  for (final sale in sales) {
+    remaining[sale['id'] as int] = ((sale['total'] as num?) ?? 0).toDouble();
+  }
+
+  final paidDateBySale = <int, DateTime>{};
+  for (final payment in payments) {
+    var amount = ((payment['amount'] as num?) ?? 0).toDouble();
+    final paymentDate = _parseDate(payment['date'].toString()) ?? DateTime.now();
+    if (amount <= 0) continue;
+    for (final sale in sales) {
+      if (amount <= 0) break;
+      final id = sale['id'] as int;
+      final outstanding = remaining[id] ?? 0;
+      if (outstanding <= 0) continue;
+      final applied = amount < outstanding ? amount : outstanding;
+      final after = outstanding - applied;
+      remaining[id] = after < 0.01 ? 0 : after;
+      amount -= applied;
+      if (remaining[id] == 0) paidDateBySale[id] = paymentDate;
+    }
+  }
+
+  var completed = 0;
+  var onTime = 0;
+  var late = 0;
+  var overdueDays = 0;
+  final now = DateTime.now();
+
+  for (final sale in sales) {
+    final id = sale['id'] as int;
+    final saleDate = _parseDate(sale['date'].toString());
+    if (saleDate == null) continue;
+    final dueDate = DateTime(saleDate.year, saleDate.month, saleDate.day + creditDays);
+    final paidDate = paidDateBySale[id];
+    if (paidDate != null) {
+      completed++;
+      if (!paidDate.isAfter(dueDate)) {
+        onTime++;
+      } else {
+        late++;
+      }
+    } else if ((remaining[id] ?? 0) > 0.01 && now.isAfter(dueDate)) {
+      final days = now.difference(dueDate).inDays;
+      if (days > overdueDays) overdueDays = days;
+    }
+  }
+
+  final currentDue = ((party['balance'] as num?) ?? 0).toDouble().clamp(0, double.infinity);
+  final percent = completed == 0 ? 0.0 : (onTime / completed) * 100;
+
+  int stars;
+  String label;
+  if (completed == 0) {
+    stars = 0;
+    label = 'New / No history';
+  } else if (percent >= 90) {
+    stars = 5;
+    label = 'Excellent';
+  } else if (percent >= 75) {
+    stars = 4;
+    label = 'Good';
+  } else if (percent >= 60) {
+    stars = 3;
+    label = 'Average';
+  } else if (percent >= 40) {
+    stars = 2;
+    label = 'Risky';
+  } else {
+    stars = 1;
+    label = 'High Risk';
+  }
+
+  if (currentDue > 0.01 && overdueDays > 0 && completed > 0) {
+    label = '${label} • Currently overdue';
+  }
+
+  return CustomerRating(
+    onTimePercent: percent,
+    completedInvoices: completed,
+    onTimeInvoices: onTime,
+    lateInvoices: late,
+    currentDue: currentDue,
+    overdueDays: overdueDays,
+    stars: stars,
+    label: label,
+  );
+}
+
+String _ratingStars(int stars) => stars <= 0 ? '—' : '★' * stars + (5 - stars > 0 ? '☆' * (5 - stars) : '');
+
+Future<void> _openCustomerMessage(BuildContext context, Map<String, Object?> party, CustomerRating rating, {required bool whatsapp}) async {
+  final rawPhone = (party['phone'] ?? '').toString().trim();
+  if (rawPhone.isEmpty) {
+    await showMsg(context, 'Customer phone number is not saved.');
+    return;
+  }
+
+  final digits = rawPhone.replaceAll(RegExp(r'[^0-9]'), '');
+  final phone = digits.length == 10 ? '91${digits}' : digits;
+  final name = (party['name'] ?? 'Customer').toString();
+  final due = rating.currentDue;
+  final message = due > 0.01
+      ? 'Hello ${name}, a payment of ${pdfMoney(due)} is currently due at our shop. Please make the payment at your convenience. Thank you.'
+      : 'Hello ${name}, thank you for your payments and continued support.';
+
+  try {
+    final uri = whatsapp
+        ? Uri.parse('https://wa.me/${phone}?text=${Uri.encodeComponent(message)}')
+        : Uri.parse('sms:${phone}?body=${Uri.encodeComponent(message)}');
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      await showMsg(context, whatsapp ? 'WhatsApp could not be opened on this phone.' : 'SMS app could not be opened on this phone.');
+    }
+  } catch (_) {
+    if (context.mounted) await showMsg(context, 'Could not open the messaging app.');
+  }
+}
+
+Widget _ratingStat(String title, String value) => Column(
+  crossAxisAlignment: CrossAxisAlignment.start,
+  children: [
+    Text(title, style: const TextStyle(fontSize: 10, color: Color(0xFF777B86))),
+    const SizedBox(height: 2),
+    Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900)),
+  ],
+);
+
+Future<void> showCustomerDetails(BuildContext context, Database db, Map<String, Object?> party) async {
+  final rating = await calculateCustomerRating(db, party);
+  if (!context.mounted) return;
+
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (sheetContext) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 8, 18, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(party['name'].toString(), style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+            const SizedBox(height: 4),
+            Text((party['phone'] ?? '').toString(), style: const TextStyle(color: Color(0xFF777B86))),
+            const SizedBox(height: 14),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(_ratingStars(rating.stars), style: const TextStyle(fontSize: 26, letterSpacing: 2)),
+                    const SizedBox(height: 4),
+                    Text(rating.label, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900)),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(child: _ratingStat('On-time', '${rating.onTimePercent.toStringAsFixed(0)}%')),
+                        Expanded(child: _ratingStat('Paid on time', '${rating.onTimeInvoices}/${rating.completedInvoices}')),
+                        Expanded(child: _ratingStat('Late', rating.lateInvoices.toString())),
+                      ],
+                    ),
+                    const Divider(height: 22),
+                    Row(
+                      children: [
+                        Expanded(child: _ratingStat('Current Due', money(rating.currentDue))),
+                        Expanded(child: _ratingStat('Overdue', rating.overdueDays > 0 ? '${rating.overdueDays} days' : 'No')),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            const Text('Message customer', style: TextStyle(fontWeight: FontWeight.w900)),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(child: OutlinedButton.icon(
+                  onPressed: () => _openCustomerMessage(sheetContext, party, rating, whatsapp: true),
+                  icon: const Icon(Icons.chat_rounded),
+                  label: const Text('WhatsApp'),
+                )),
+                const SizedBox(width: 10),
+                Expanded(child: OutlinedButton.icon(
+                  onPressed: () => _openCustomerMessage(sheetContext, party, rating, whatsapp: false),
+                  icon: const Icon(Icons.sms_rounded),
+                  label: const Text('SMS'),
+                )),
+              ],
+            ),
+            if (rating.currentDue > 0.01)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text('Due reminder is pre-filled with the current outstanding amount.', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+              ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 class _PartiesPageState extends State<PartiesPage> {
   bool customer = true;
 
@@ -1518,16 +1756,45 @@ class _PartiesPageState extends State<PartiesPage> {
                   itemCount: rows.length,
                   itemBuilder: (context, index) {
                     final x = rows[index];
-                    return Card(
-                      child: ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: const Color(0xFFEEF0FF),
-                          child: Icon(customer ? Icons.person : Icons.factory, color: const Color(0xFF5B5CE2)),
+                    if (!customer) {
+                      return Card(
+                        child: ListTile(
+                          leading: const CircleAvatar(
+                            backgroundColor: Color(0xFFEEF0FF),
+                            child: Icon(Icons.factory, color: Color(0xFF5B5CE2)),
+                          ),
+                          title: Text(x['name'].toString(), style: const TextStyle(fontWeight: FontWeight.w800)),
+                          subtitle: Text('${(x['phone'] ?? '').toString()} • ${(x['gstin'] ?? '').toString()}'),
+                          trailing: Text(money((x['balance'] as num?) ?? 0), style: const TextStyle(fontWeight: FontWeight.w900)),
                         ),
-                        title: Text(x['name'].toString(), style: const TextStyle(fontWeight: FontWeight.w800)),
-                        subtitle: Text((x['phone'] ?? '').toString() + ' • ' + (x['gstin'] ?? '').toString()),
-                        trailing: Text(money((x['balance'] as num?) ?? 0), style: const TextStyle(fontWeight: FontWeight.w900)),
-                      ),
+                      );
+                    }
+
+                    return FutureBuilder<CustomerRating>(
+                      future: calculateCustomerRating(widget.db, x),
+                      builder: (context, ratingSnapshot) {
+                        final rating = ratingSnapshot.data;
+                        final due = ((x['balance'] as num?) ?? 0).toDouble();
+                        final ratingText = rating == null ? 'Calculating…' : '${_ratingStars(rating.stars)}  ${rating.label}';
+                        return Card(
+                          child: ListTile(
+                            onTap: () => showCustomerDetails(context, widget.db, x),
+                            leading: const CircleAvatar(
+                              backgroundColor: Color(0xFFEEF0FF),
+                              child: Icon(Icons.person, color: Color(0xFF5B5CE2)),
+                            ),
+                            title: Text(x['name'].toString(), style: const TextStyle(fontWeight: FontWeight.w800)),
+                            subtitle: Text('${(x['phone'] ?? '').toString()} • $ratingText\\n${due > 0.01 ? 'Due ${money(due)}' : 'No current due'}', maxLines: 2),
+                            trailing: due > 0.01
+                                ? IconButton(
+                                    tooltip: 'Message about due',
+                                    icon: const Icon(Icons.chat_rounded),
+                                    onPressed: rating == null ? null : () => _openCustomerMessage(context, x, rating, whatsapp: true),
+                                  )
+                                : Text(money(due), style: const TextStyle(fontWeight: FontWeight.w900)),
+                          ),
+                        );
+                      },
                     );
                   },
                 );
