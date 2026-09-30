@@ -886,7 +886,7 @@ Widget stat(String a,String b,IconData i)=>Container(padding:const EdgeInsets.al
         TextField(controller:buy,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Purchase price')),
         TextField(controller:sell,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Selling price')),
         Row(children:[Expanded(child:TextField(controller:gst,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'GST %'))),const SizedBox(width:8),Expanded(child:TextField(controller:min,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Low stock')))])
-      ])),
+      ]))),
       actions:[TextButton(onPressed:()=>Navigator.pop(d),child:const Text('Cancel')),FilledButton(onPressed:()async{
         if(name.text.trim().isEmpty)return;
         await db.insert('dm_products',{'name':name.text.trim(),'sku':sku.text.trim(),'barcode':sku.text.trim(),'category':'','hsn':hsn.text.trim(),'unit':unit,'gst':double.tryParse(gst.text)??0,'buy':double.tryParse(buy.text)??0,'sell':double.tryParse(sell.text)??0,'wholesale':0,'qty':double.tryParse(stock.text)??0,'min_qty':double.tryParse(min.text)??0});
@@ -897,3 +897,140 @@ Widget stat(String a,String b,IconData i)=>Container(padding:const EdgeInsets.al
 }
 
 
+
+
+Future<void> coreParty(BuildContext c,Database db,String type)async{
+  final n=TextEditingController(),ph=TextEditingController(),ad=TextEditingController(),st=TextEditingController(text:'West Bengal'),gst=TextEditingController(),lim=TextEditingController(),days=TextEditingController();
+  await showDialog(context:c,builder:(d)=>AlertDialog(title:Text(type=='customer'?'New Customer':'New Supplier'),content:SingleChildScrollView(child:Column(children:[
+    TextField(controller:n,decoration:const InputDecoration(labelText:'Name *')),TextField(controller:ph,decoration:const InputDecoration(labelText:'Phone')),TextField(controller:ad,decoration:const InputDecoration(labelText:'Address')),TextField(controller:st,decoration:const InputDecoration(labelText:'State')),TextField(controller:gst,decoration:const InputDecoration(labelText:'GSTIN')),TextField(controller:lim,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Credit limit')),TextField(controller:days,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'Credit days'))
+  ])),actions:[TextButton(onPressed:()=>Navigator.pop(d),child:const Text('Cancel')),FilledButton(onPressed:()async{
+    if(n.text.trim().isEmpty)return;
+    await db.insert('dm_parties',{'name':n.text.trim(),'phone':ph.text.trim(),'address':ad.text.trim(),'state':st.text.trim(),'gstin':gst.text.trim(),'type':type,'balance':0,'credit_limit':double.tryParse(lim.text)??0,'credit_days':int.tryParse(days.text)??0});
+    if(d.mounted)Navigator.pop(d);
+  },child:const Text('Save'))]));
+}
+
+Future<void> corePayment(BuildContext c,Database db,String type)async{
+  final list=await db.query('dm_parties',where:'type=?',whereArgs:[type=='IN'?'customer':'supplier'],orderBy:'name');
+  if(!c.mounted)return;int? party;String mode='Cash';final amount=TextEditingController(),ref=TextEditingController();
+  await showDialog(context:c,builder:(d)=>StatefulBuilder(builder:(d,set)=>AlertDialog(title:Text(type=='IN'?'Payment In':'Payment Out'),content:Column(mainAxisSize:MainAxisSize.min,children:[
+    DropdownButtonFormField<int?>(value:party,decoration:InputDecoration(labelText:type=='IN'?'Customer':'Supplier'),items:list.map((x)=>DropdownMenuItem<int?>(value:x['id'] as int,child:Text(x['name'].toString()))).toList(),onChanged:(v)=>set(()=>party=v)),
+    TextField(controller:amount,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Amount')),
+    DropdownButtonFormField<String>(value:mode,decoration:const InputDecoration(labelText:'Payment mode'),items:['Cash','UPI','Bank','Card','Cheque'].map((x)=>DropdownMenuItem(value:x,child:Text(x))).toList(),onChanged:(v)=>set(()=>mode=v!)),
+    TextField(controller:ref,decoration:const InputDecoration(labelText:'Reference'))
+  ]),actions:[TextButton(onPressed:()=>Navigator.pop(d),child:const Text('Cancel')),FilledButton(onPressed:()async{
+    final v=double.tryParse(amount.text)??0;if(v<=0)return;
+    await db.insert('dm_payments',{'party_id':party,'type':type,'amount':v,'date':now(),'mode':mode,'reference':ref.text});
+    if(party!=null)await db.rawUpdate('UPDATE dm_parties SET balance=balance-? WHERE id=?',[v,party]);
+    if(d.mounted)Navigator.pop(d);
+  },child:const Text('Save'))])));
+}
+
+Future<void> coreExpense(BuildContext c,Database db)async{
+  String category='Other',mode='Cash';final amount=TextEditingController(),note=TextEditingController();
+  await showDialog(context:c,builder:(d)=>StatefulBuilder(builder:(d,set)=>AlertDialog(title:const Text('Business Expense'),content:Column(mainAxisSize:MainAxisSize.min,children:[
+    TextField(controller:amount,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Amount')),
+    DropdownButtonFormField<String>(value:category,decoration:const InputDecoration(labelText:'Category'),items:['Rent','Electricity','Salary','Transport','Packaging','Advertisement','Internet','Maintenance','Other'].map((x)=>DropdownMenuItem(value:x,child:Text(x))).toList(),onChanged:(v)=>set(()=>category=v!)),
+    DropdownButtonFormField<String>(value:mode,decoration:const InputDecoration(labelText:'Payment mode'),items:['Cash','UPI','Bank','Card'].map((x)=>DropdownMenuItem(value:x,child:Text(x))).toList(),onChanged:(v)=>set(()=>mode=v!)),
+    TextField(controller:note,decoration:const InputDecoration(labelText:'Note'))
+  ]),actions:[TextButton(onPressed:()=>Navigator.pop(d),child:const Text('Cancel')),FilledButton(onPressed:()async{
+    final v=double.tryParse(amount.text)??0;if(v<=0)return;
+    await db.insert('dm_expenses',{'category':category,'amount':v,'date':now(),'mode':mode,'note':note.text});
+    if(d.mounted)Navigator.pop(d);
+  },child:const Text('Save'))])));
+}
+
+Future<void> corePayments(BuildContext c,Database db)async{
+  final rows=await db.rawQuery('SELECT p.*,q.name party FROM dm_payments p LEFT JOIN dm_parties q ON q.id=p.party_id ORDER BY p.id DESC');
+  if(!c.mounted)return;
+  Navigator.push(c,MaterialPageRoute(builder:(_)=>SimplePage('Payments','Payment history',rows)));
+}
+
+class CoreReports extends StatelessWidget{
+  final Database db;const CoreReports(this.db,{super.key});
+  @override Widget build(BuildContext c)=>Scaffold(appBar:AppBar(title:const Text('Reports & Export',style:TextStyle(fontWeight:FontWeight.w900))),body:ListView(padding:const EdgeInsets.all(18),children:[
+    reportCard('Business Summary','Sales, purchase, profit and outstanding',Icons.analytics_rounded,()=>corePdf(c,db)),
+    reportCard('Excel Workbook','Sales, purchase, parties, products, payments and expenses',Icons.table_chart_rounded,()=>coreExcel(c,db)),
+    reportCard('CSV Export','Portable business data',Icons.data_object_rounded,()=>coreCsv(c,db)),
+    reportCard('PDF Report','A4 report ready to share or print',Icons.picture_as_pdf_rounded,()=>corePdf(c,db))
+  ]));
+}
+
+Future<Directory> coreFolder()async{final d=await getApplicationDocumentsDirectory();final f=Directory(p.join(d.path,'DokanMate_Exports'));if(!await f.exists())await f.create(recursive:true);return f;}
+Future<void> coreShare(String path,String text)async=>Share.shareXFiles([XFile(path)],text:text);
+CellValue coreCell(Object? v){if(v==null)return TextCellValue('');if(v is int)return IntCellValue(v);if(v is num)return DoubleCellValue(v.toDouble());return TextCellValue(v.toString());}
+Future<void> coreExcel(BuildContext c,Database db)async{
+  try{
+    final book=Excel.createExcel();
+    for(final table in ['dm_sales','dm_purchases','dm_parties','dm_products','dm_payments','dm_expenses','dm_stock']){
+      final rows=await db.query(table);final sheet=book[table];
+      if(rows.isEmpty){sheet.appendRow([TextCellValue('No data')]);continue;}
+      final keys=rows.first.keys.toList();sheet.appendRow(keys.map((x)=>TextCellValue(x)).toList());
+      for(final row in rows)sheet.appendRow(keys.map((x)=>coreCell(row[x])).toList());
+    }
+    final bytes=book.save();if(bytes==null)throw Exception('Excel creation failed');
+    final file=File(p.join((await coreFolder()).path,'DokanMate_'+DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())+'.xlsx'));
+    await file.writeAsBytes(bytes,flush:true);await coreShare(file.path,'DokanMate Excel export');msg(c,'Excel exported successfully.');
+  }catch(e){msg(c,'Excel export failed: '+e.toString());}
+}
+Future<void> coreCsv(BuildContext c,Database db)async{
+  try{
+    final out=StringBuffer();
+    for(final table in ['dm_sales','dm_purchases','dm_parties','dm_products','dm_payments','dm_expenses','dm_stock']){
+      final rows=await db.query(table);out.writeln(table.toUpperCase());
+      if(rows.isEmpty){out.writeln('No data');continue;}
+      final keys=rows.first.keys.toList();out.writeln(keys.join(','));
+      for(final row in rows)out.writeln(keys.map((k)=>'"'+(row[k]??'').toString().replaceAll('"','""')+'"').join(','));
+      out.writeln();
+    }
+    final file=File(p.join((await coreFolder()).path,'DokanMate_'+DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())+'.csv'));
+    await file.writeAsString(out.toString(),flush:true);await coreShare(file.path,'DokanMate CSV export');msg(c,'CSV exported successfully.');
+  }catch(e){msg(c,'CSV export failed: '+e.toString());}
+}
+Future<void> corePdf(BuildContext c,Database db)async{
+  try{
+    final s=(await db.rawQuery('SELECT COALESCE(SUM(total),0) sales,COALESCE(SUM(paid),0) paid,COALESCE(SUM(due),0) due FROM dm_sales')).first;
+    final pu=(await db.rawQuery('SELECT COALESCE(SUM(total),0) total,COALESCE(SUM(due),0) due FROM dm_purchases')).first;
+    final ex=(await db.rawQuery('SELECT COALESCE(SUM(amount),0) total FROM dm_expenses')).first;
+    final result=(s['sales'] as num).toDouble()-(pu['total'] as num).toDouble()-(ex['total'] as num).toDouble();
+    final doc=pw.Document();
+    doc.addPage(pw.MultiPage(pageFormat:PdfPageFormat.a4,build:(_)=>[
+      pw.Text('DokanMate Business Report',style:pw.TextStyle(fontSize:24,fontWeight:pw.FontWeight.bold)),
+      pw.Text(DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.now())),pw.SizedBox(height:18),
+      pw.TableHelper.fromTextArray(headers:['Metric','Amount'],data:[
+        ['Sales',money(s['sales'] as num)],['Collection',money(s['paid'] as num)],['Receivable',money(s['due'] as num)],
+        ['Purchase',money(pu['total'] as num)],['Payable',money(pu['due'] as num)],['Expenses',money(ex['total'] as num)],['Net result',money(result)]
+      ]),pw.SizedBox(height:20),pw.Text('DokanMate offline business manager')
+    ]));
+    final file=File(p.join((await coreFolder()).path,'DokanMate_Report_'+DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())+'.pdf'));
+    await file.writeAsBytes(await doc.save(),flush:true);await coreShare(file.path,'DokanMate PDF report');msg(c,'PDF created successfully.');
+  }catch(e){msg(c,'PDF failed: '+e.toString());}
+}
+Future<void> coreBusiness(BuildContext c,Database db)async{
+  final b=(await db.query('dm_business',where:'id=1')).first;
+  final n=TextEditingController(text:b['name'].toString()),o=TextEditingController(text:b['owner'].toString()),ph=TextEditingController(text:b['phone'].toString()),ad=TextEditingController(text:b['address'].toString()),st=TextEditingController(text:b['state'].toString()),gst=TextEditingController(text:b['gstin'].toString()),upi=TextEditingController(text:b['upi'].toString());
+  await showDialog(context:c,builder:(d)=>AlertDialog(title:const Text('Business Profile'),content:SingleChildScrollView(child:Column(children:[
+    TextField(controller:n,decoration:const InputDecoration(labelText:'Business name')),TextField(controller:o,decoration:const InputDecoration(labelText:'Owner')),TextField(controller:ph,decoration:const InputDecoration(labelText:'Phone')),TextField(controller:ad,decoration:const InputDecoration(labelText:'Address')),TextField(controller:st,decoration:const InputDecoration(labelText:'State')),TextField(controller:gst,decoration:const InputDecoration(labelText:'GSTIN')),TextField(controller:upi,decoration:const InputDecoration(labelText:'UPI ID'))
+  ])),actions:[TextButton(onPressed:()=>Navigator.pop(d),child:const Text('Cancel')),FilledButton(onPressed:()async{await db.update('dm_business',{'name':n.text,'owner':o.text,'phone':ph.text,'address':ad.text,'state':st.text,'gstin':gst.text,'upi':upi.text},where:'id=1');if(d.mounted)Navigator.pop(d);},child:const Text('Save'))]));
+}
+Future<void> coreInvoicePdf(BuildContext c,Database db,int id,bool purchase)async{
+  try{
+    final table=purchase?'dm_purchases':'dm_sales',itemsTable=purchase?'dm_purchase_items':'dm_sale_items',key=purchase?'purchase_id':'sale_id';
+    final rows=await db.rawQuery('SELECT x.*,p.name party FROM '+table+' x LEFT JOIN dm_parties p ON p.id=x.party_id WHERE x.id=?',[id]);if(rows.isEmpty)return;
+    final x=rows.first,items=await db.query(itemsTable,where:key+'=?',whereArgs:[id]),b=(await db.query('dm_business',where:'id=1')).first;
+    final doc=pw.Document();
+    doc.addPage(pw.MultiPage(pageFormat:PdfPageFormat.a4,build:(_)=>[
+      pw.Text(b['name'].toString(),style:pw.TextStyle(fontSize:24,fontWeight:pw.FontWeight.bold)),pw.Text(b['address'].toString()),pw.Text('Phone: '+b['phone'].toString()),pw.Text('GSTIN: '+b['gstin'].toString()),
+      pw.SizedBox(height:15),pw.Text(purchase?'PURCHASE INVOICE':'TAX INVOICE',style:pw.TextStyle(fontSize:18,fontWeight:pw.FontWeight.bold)),pw.Text('Invoice: '+x['invoice'].toString()),pw.Text('Date: '+ddate(x['date'])),pw.Text((purchase?'Supplier: ':'Bill To: ')+(x['party']??'Walk-in').toString()),
+      pw.SizedBox(height:12),
+      ...items.map((i)=>pw.Text(i['name'].toString()+'  '+i['qty'].toString()+' '+i['unit'].toString()+'  '+money(i['rate'] as num)+'  GST '+i['gst'].toString()+'%  '+money(i['amount'] as num))),
+      pw.Divider(),pw.Text('Subtotal: '+money(x['subtotal'] as num)),pw.Text('Discount: '+money(x['discount'] as num)),pw.Text('GST: '+money(((x['cgst'] as num)+(x['sgst'] as num)+(x['igst'] as num)))),pw.Text('Grand Total: '+money(x['total'] as num),style:pw.TextStyle(fontSize:16,fontWeight:pw.FontWeight.bold)),pw.Text('Paid: '+money(x['paid'] as num)),pw.Text('Due: '+money(x['due'] as num))
+    ]));
+    final file=File(p.join((await coreFolder()).path,x['invoice'].toString()+'.pdf'));await file.writeAsBytes(await doc.save(),flush:true);await coreShare(file.path,'DokanMate invoice');
+  }catch(e){msg(c,'Invoice PDF failed: '+e.toString());}
+}
+class SimplePage extends StatelessWidget{
+  final String title,sub;final List<Map<String,Object?>> rows;
+  const SimplePage(this.title,this.sub,this.rows,{super.key});
+  @override Widget build(BuildContext c)=>Scaffold(appBar:AppBar(title:Text(title)),body:ListView(padding:const EdgeInsets.all(18),children:[Text(sub),const SizedBox(height:10),...rows.map((x)=>Card(child:ListTile(title:Text((x['party']??'').toString()),subtitle:Text((x['type']??'').toString()+' • '+(x['mode']??'').toString()),trailing:Text(money((x['amount'] as num?)??0))))) ]));
+}
