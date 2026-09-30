@@ -167,7 +167,7 @@ class _DokanMateState extends State<DokanMate> {
               tab = value;
             });
           },
-          destinations: const [
+          destinations: [
             NavigationDestination(icon: Icon(Icons.grid_view_rounded), label: tr('Home')),
             NavigationDestination(icon: Icon(Icons.receipt_long_rounded), label: tr('Sales')),
             NavigationDestination(icon: Icon(Icons.shopping_cart_rounded), label: tr('Purchase')),
@@ -343,7 +343,7 @@ class HomePage extends StatelessWidget {
                     ),
                     const SizedBox(height: 8),
                     Text(money(x['sales']!), style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.w900)),
-                    Text(tr('Total Sales'),, style: TextStyle(color: Color(0xFFD9DBEE))),
+                    Text(tr('Total Sales'), style: const TextStyle(color: Color(0xFFD9DBEE))),
                     const SizedBox(height: 15),
                     Row(
                       children: [
@@ -914,6 +914,7 @@ class _InvoicePageState extends State<InvoicePage> {
       await showMsg(context, 'Invoice ' + invoice + ' saved successfully.');
     }
   }
+}
 
 Widget _label(String text) {
   return Padding(
