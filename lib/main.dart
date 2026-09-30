@@ -1853,18 +1853,40 @@ Future<void> invoicePdf(BuildContext context, Database db, int id, bool purchase
                       ],
                     ),
                   ),
-                  pw.Container(
-                    padding: const pw.EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: pw.BoxDecoration(color: PdfColors.white, borderRadius: pw.BorderRadius.circular(10)),
-                    child: pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.end,
-                      children: [
-                        pw.Text(purchase ? 'PURCHASE' : 'TAX INVOICE', style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: primary)),
-                        pw.SizedBox(height: 4),
-                        pw.Text(x['invoice'].toString(), style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold, color: ink)),
-                        pw.Text(prettyDate(x['date']), style: pw.TextStyle(fontSize: 8, color: muted)),
-                      ],
-                    ),
+                  pw.SizedBox(width: 10),
+                  pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.end,
+                    children: [
+                      pw.Container(
+                        width: 68,
+                        height: 68,
+                        padding: const pw.EdgeInsets.all(4),
+                        decoration: pw.BoxDecoration(color: PdfColors.white, borderRadius: pw.BorderRadius.circular(8)),
+                        child: pw.BarcodeWidget(
+                          barcode: pw.Barcode.qrCode(),
+                          data: purchase
+                              ? 'SUPPLIER\\nName: ${x['party'] ?? 'Supplier'}\\nPhone: ${x['party_phone'] ?? ''}\\nAddress: ${x['party_address'] ?? ''}\\nGSTIN: ${x['party_gstin'] ?? ''}\\nState: ${x['party_state'] ?? ''}'
+                              : 'SHOP DETAILS\\nName: ${business['name'] ?? ''}\\nOwner: ${business['owner'] ?? ''}\\nAddress: ${business['address'] ?? ''}\\nPhone: ${business['phone'] ?? ''}\\nGSTIN: ${business['gstin'] ?? ''}\\nUPI: ${business['upi'] ?? ''}\\nState: ${business['state'] ?? ''}',
+                          drawText: false,
+                        ),
+                      ),
+                      pw.SizedBox(height: 3),
+                      pw.Text(purchase ? 'Supplier QR' : 'Shop QR', style: pw.TextStyle(fontSize: 6, color: PdfColors.white)),
+                      pw.SizedBox(height: 5),
+                      pw.Container(
+                        padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                        decoration: pw.BoxDecoration(color: PdfColors.white, borderRadius: pw.BorderRadius.circular(8)),
+                        child: pw.Column(
+                          crossAxisAlignment: pw.CrossAxisAlignment.end,
+                          children: [
+                            pw.Text(purchase ? 'PURCHASE' : 'TAX INVOICE', style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold, color: primary)),
+                            pw.SizedBox(height: 3),
+                            pw.Text(x['invoice'].toString(), style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold, color: ink)),
+                            pw.Text(prettyDate(x['date']), style: pw.TextStyle(fontSize: 7, color: muted)),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
