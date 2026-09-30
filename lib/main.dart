@@ -1140,9 +1140,10 @@ class _InvoicePageState extends State<InvoicePage> {
         await tx.update(widget.purchase ? 'purchases' : 'sales', {
           'party_id': partyId, 'subtotal': subtotal, 'discount': discount, 'taxable': taxable,
           'cgst': cgst, 'sgst': sgst, 'igst': igst, 'total': total, 'paid': paidAmount, 'due': due, 'mode': mode,
+          'place_of_supply': partyState,
         }, where: 'id=?', whereArgs: [widget.editId]);
       }
-      final id = await tx.insert(table, {
+      final id = widget.editId ?? await tx.insert(table, {
         'invoice': invoice,
         'date': today(),
         'party_id': partyId,
@@ -1156,6 +1157,7 @@ class _InvoicePageState extends State<InvoicePage> {
         'paid': paidAmount,
         'due': due,
         'mode': mode,
+        if (!widget.purchase) 'place_of_supply': partyState,
       });
 
       for (final line in lines) {
@@ -1728,115 +1730,65 @@ class ReportsPage extends StatelessWidget {
   final Database db;
   const ReportsPage(this.db, {super.key});
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Reports & Export', style: TextStyle(fontWeight: FontWeight.w900))),
-      body: ListView(
-        padding: const EdgeInsets.all(18),
-        children: [
-          _report(context, 'Business Summary', 'Sales, purchase, due, expenses and result', Icons.analytics_rounded, () => exportPdf(context, db)),
-          _report(context, 'Excel Workbook', 'Sales, purchase, parties, products, payments and expenses', Icons.table_chart_rounded, () => exportExcel(context, db)),
-          _report(context, 'CSV Export', 'Portable business data', Icons.data_object_rounded, () => exportCsv(context, db)),
-          _report(context, 'PDF Report', 'A4 printable report', Icons.picture_as_pdf_rounded, () => exportPdf(context, db)),
-        ],
-      ),
-    );
-  }
-
   Widget _report(BuildContext context, String title, String subtitle, IconData icon, VoidCallback onTap) {
-    return Card(
-      child: ListTile(
-        onTap: onTap,
-        contentPadding: const EdgeInsets.all(12),
-        leading: Container(
-          width: 48,
-          height: 48,
-          decoration: BoxDecoration(color: const Color(0xFFEEF0FF), borderRadius: BorderRadius.circular(14)),
-          child: Icon(icon, color: const Color(0xFF5B5CE2)),
-        ),
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
-        subtitle: Text(subtitle, style: const TextStyle(fontSize: 11)),
-        trailing: const Icon(Icons.chevron_right_rounded),
-      ),
-    );
+    return Card(child: ListTile(
+      onTap: onTap,
+      contentPadding: const EdgeInsets.all(12),
+      leading: CircleAvatar(backgroundColor: const Color(0xFFEEF0FF), child: Icon(icon, color: const Color(0xFF5B5CE2))),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
+      subtitle: Text(subtitle),
+      trailing: const Icon(Icons.chevron_right_rounded),
+    ));
   }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Reports & Export', style: TextStyle(fontWeight: FontWeight.w900))),
+    body: ListView(
+      padding: const EdgeInsets.all(18),
+      children: [
+        _report(context, 'Business Summary', 'Sales, purchase, due, expenses and profit', Icons.analytics_rounded, () => exportPdf(context, db)),
+        _report(context, 'Stock Summary PDF', 'Product-wise quantity, stock value and low stock', Icons.inventory_2_rounded, () => stockSummaryPdf(context, db)),
+        _report(context, 'GST Reports', 'GSTR-1, GSTR-3B, HSN summary and tax breakup', Icons.receipt_long_rounded, () => Navigator.push(context, MaterialPageRoute(builder: (_) => GstReportsPage(db)))),
+        _report(context, 'Excel Workbook', 'Sales, purchase, parties, products, payments and expenses', Icons.table_chart_rounded, () => exportExcel(context, db)),
+        _report(context, 'CSV Export', 'Portable business data', Icons.data_object_rounded, () => exportCsv(context, db)),
+      ],
+    ),
+  );
 }
 
-Future<Directory> exportFolder() async {
-  final base = await getApplicationDocumentsDirectory();
-  final folder = Directory(p.join(base.path, 'DokanMate_Exports'));
-  if (!await folder.exists()) await folder.create(recursive: true);
-  return folder;
+class GstReportsPage extends StatefulWidget {
+  final Database db;
+  const GstReportsPage(this.db, {super.key});
+  @override State<GstReportsPage> createState() => _GstReportsPageState();
 }
 
-Future<void> shareFile(String path, String text) async {
-  await Share.shareXFiles([XFile(path)], text: text);
-}
+class _GstReportsPageState extends State<GstReportsPage> {
+  DateTime month = DateTime.now();
 
-CellValue excelValue(Object? value) {
-  if (value == null) return TextCellValue('');
-  if (value is int) return IntCellValue(value);
-  if (value is num) return DoubleCellValue(value.toDouble());
-  return TextCellValue(value.toString());
-}
+  String get period => DateFormat('MMMM yyyy').format(month);
 
-Future<void> exportExcel(BuildContext context, Database db) async {
-  try {
-    final book = Excel.createExcel();
-    final tables = ['sales','purchases','parties','products','payments','expenses','stock_moves'];
-    for (final table in tables) {
-      final rows = await db.query(table);
-      final sheet = book[table];
-      if (rows.isEmpty) {
-        sheet.appendRow([TextCellValue('No data')]);
-        continue;
-      }
-      final keys = rows.first.keys.toList();
-      sheet.appendRow(keys.map((x) => TextCellValue(x)).toList());
-      for (final row in rows) {
-        sheet.appendRow(keys.map((key) => excelValue(row[key])).toList());
-      }
-    }
-    final bytes = book.save();
-    if (bytes == null) throw Exception('Excel creation failed');
-    final file = File(p.join((await exportFolder()).path, 'DokanMate_' + stamp() + '.xlsx'));
-    await file.writeAsBytes(bytes, flush: true);
-    await shareFile(file.path, 'DokanMate Excel export');
-    showMsg(context, 'Excel file created successfully.');
-  } catch (e) {
-    showMsg(context, 'Excel export failed: ' + e.toString());
+  Future<void> pickMonth() async {
+    final d = await showDatePicker(context: context, initialDate: month, firstDate: DateTime(2020), lastDate: DateTime(2100));
+    if (d != null) setState(() => month = d);
   }
-}
 
-Future<void> exportCsv(BuildContext context, Database db) async {
-  try {
-    final buffer = StringBuffer();
-    final tables = ['sales','purchases','parties','products','payments','expenses','stock_moves'];
-    for (final table in tables) {
-      final rows = await db.query(table);
-      buffer.writeln(table.toUpperCase());
-      if (rows.isEmpty) {
-        buffer.writeln('No data');
-        continue;
-      }
-      final keys = rows.first.keys.toList();
-      buffer.writeln(keys.join(','));
-      for (final row in rows) {
-        buffer.writeln(keys.map((key) {
-          final value = (row[key] ?? '').toString().replaceAll('"', '""');
-          return '"' + value + '"';
-        }).join(','));
-      }
-      buffer.writeln();
-    }
-    final file = File(p.join((await exportFolder()).path, 'DokanMate_' + stamp() + '.csv'));
-    await file.writeAsString(buffer.toString(), flush: true);
-    await shareFile(file.path, 'DokanMate CSV export');
-    showMsg(context, 'CSV file created successfully.');
-  } catch (e) {
-    showMsg(context, 'CSV export failed: ' + e.toString());
-  }
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('GST Reports', style: TextStyle(fontWeight: FontWeight.w900))),
+    body: ListView(padding: const EdgeInsets.all(18), children: [
+      Card(child: ListTile(leading: const Icon(Icons.calendar_month_rounded), title: const Text('Return Period', style: TextStyle(fontWeight: FontWeight.w800)), subtitle: Text(period), trailing: TextButton(onPressed: pickMonth, child: const Text('Change')))),
+      const SizedBox(height: 8),
+      _gstCard('GSTR-1 Preparation', 'B2B + B2C + HSN-wise outward supplies', Icons.outbox_rounded, () => gstPdf(context, widget.db, month, 'GSTR-1')),
+      _gstCard('GSTR-3B Summary', 'Outward tax liability + purchase/input-tax summary', Icons.summarize_rounded, () => gstPdf(context, widget.db, month, 'GSTR-3B')),
+      _gstCard('HSN-wise Summary', 'HSN, quantity, taxable value and GST rate-wise totals', Icons.category_rounded, () => gstPdf(context, widget.db, month, 'HSN')),
+      _gstCard('GST Tax Ledger', 'CGST, SGST and IGST collected on sales', Icons.account_balance_rounded, () => gstPdf(context, widget.db, month, 'Tax Ledger')),
+      const SizedBox(height: 12),
+      const Card(child: Padding(padding: EdgeInsets.all(14), child: Text('Important: These are filing-preparation reports generated from your DokanMate entries. Final GST return filing must still be completed and validated on the official GST Portal.', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)))),
+    ]),
+  );
+
+  Widget _gstCard(String t, String s, IconData i, VoidCallback tap) => Card(child: ListTile(onTap: tap, leading: CircleAvatar(backgroundColor: const Color(0xFFEEF0FF), child: Icon(i, color: const Color(0xFF5B5CE2))), title: Text(t, style: const TextStyle(fontWeight: FontWeight.w900)), subtitle: Text(s), trailing: const Icon(Icons.picture_as_pdf_rounded)));
 }
 
 Future<void> exportPdf(BuildContext context, Database db) async {
