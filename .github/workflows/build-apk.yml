@@ -182,7 +182,7 @@ class SmsReminderReceiver : BroadcastReceiver() {
                 name=c.getString(0) ?: "Customer"; phone=c.getString(1) ?: ""; balance=c.getDouble(2)
             }
             if (balance <= 0.01) return
-            db.rawQuery("SELECT name FROM business WHERE id=1", null).use { if (it.moveToFirst()) shop=cString(it.getString(0), "our shop").also { shop=it } }
+            db.rawQuery("SELECT name FROM business WHERE id=1", null).use { if (it.moveToFirst()) shop=cString(it.getString(0), "our shop") }
             val digits=phone.filter { it.isDigit() }
             if (digits.length < 10) return
             val number=if(digits.length==10) "91$digits" else digits
@@ -213,15 +213,15 @@ EOF
           from pathlib import Path
           p=Path("android/app/src/main/AndroidManifest.xml")
           s=p.read_text()
-          s=s.replace("</manifest>", """    <uses-permission android:name="android.permission.SEND_SMS"/>
+          if 'android.permission.SEND_SMS' not in s:
+              s=s.replace("<application", """<uses-permission android:name="android.permission.SEND_SMS"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
-    <application>
-        <receiver android:name=".SmsReminderReceiver" android:exported="false"/>
+    <application""", 1)
+              s=s.replace("</application>", """<receiver android:name=".SmsReminderReceiver" android:exported="false"/>
         <receiver android:name=".SmsReminderBootReceiver" android:enabled="true" android:exported="true">
             <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED"/></intent-filter>
         </receiver>
-    </application>
-</manifest>""")
+    </application>""", 1)
           p.write_text(s)
           PY
       - name: Remove generated test
