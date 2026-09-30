@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -18,6 +19,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'backup_service.dart';
 
 final ValueNotifier<String> appLanguage = ValueNotifier<String>('English');
+const MethodChannel _smsChannel = MethodChannel('dokanmate/sms');
 
 const Map<String, Map<String, String>> _i18n = {
   'English': {
@@ -89,7 +91,134 @@ Future<void> main() async {
     appLanguage.value = langRows.first['language'].toString();
   }
   runApp(DokanMate(db));
+  Future<void>.delayed(const Duration(seconds: 1), () => syncAllSmsReminders(db));
   Future<void>.delayed(const Duration(seconds: 3), () => DokanMateBackupService.maybeAutoBackup(db));
+}
+
+Future<bool> requestSmsPermission() async {
+  try {
+    final ok = await _smsChannel.invokeMethod<bool>('requestSmsPermission');
+    return ok == true;
+  } catch (_) {
+    return false;
+  }
+}
+
+Future<bool> hasSmsPermission() async {
+  try {
+    final ok = await _smsChannel.invokeMethod<bool>('hasSmsPermission');
+    return ok == true;
+  } catch (_) {
+    return false;
+  }
+}
+
+Future<void> scheduleSmsReminder({
+  required int partyId,
+  required DateTime dueDate,
+  required int hour,
+  required int minute,
+}) async {
+  try {
+    await _smsChannel.invokeMethod('scheduleReminder', {
+      'partyId': partyId,
+      'triggerAtMillis': dueDate.millisecondsSinceEpoch,
+    });
+  } catch (_) {}
+}
+
+Future<void> syncAllSmsReminders(Database db) async {
+  try {
+    final bRows = await db.query('business', where: 'id=1');
+    if (bRows.isEmpty) return;
+    final b = bRows.first;
+    if (((b['auto_sms_reminder'] as num?) ?? 0).toInt() != 1) return;
+    if (!await hasSmsPermission()) return;
+    final hour = ((b['sms_reminder_hour'] as num?) ?? 10).toInt();
+    final minute = ((b['sms_reminder_minute'] as num?) ?? 0).toInt();
+    final rows = await db.rawQuery(
+      'SELECT s.party_id, s.date, p.credit_days FROM sales s JOIN parties p ON p.id=s.party_id '
+      'WHERE s.party_id IS NOT NULL AND s.due > 0 AND LOWER(COALESCE(p.type, "")) IN ("customer","both")'
+    );
+    final seen = <String>{};
+    final now = DateTime.now();
+    for (final row in rows) {
+      final partyId = (row['party_id'] as num?)?.toInt();
+      final saleDate = _parseDate(row['date']?.toString());
+      if (partyId == null || saleDate == null) continue;
+      final creditDays = (row['credit_days'] as num?)?.toInt() ?? 0;
+      final base = DateTime(saleDate.year, saleDate.month, saleDate.day);
+      var trigger = DateTime(base.year, base.month, base.day + creditDays, hour, minute);
+      if (trigger.isBefore(now)) trigger = now.add(const Duration(minutes: 2));
+      final key = '$partyId-${trigger.year}-${trigger.month}-${trigger.day}';
+      if (seen.add(key)) {
+        await scheduleSmsReminder(partyId: partyId, dueDate: trigger, hour: hour, minute: minute);
+      }
+    }
+  } catch (_) {}
+}
+
+Future<void> smsReminderDialog(BuildContext context, Database db) async {
+  final rows = await db.query('business', where: 'id=1');
+  if (rows.isEmpty) return;
+  final b = rows.first;
+  bool enabled = ((b['auto_sms_reminder'] as num?) ?? 0).toInt() == 1;
+  int hour = ((b['sms_reminder_hour'] as num?) ?? 10).toInt();
+  int minute = ((b['sms_reminder_minute'] as num?) ?? 0).toInt();
+
+  await showDialog(
+    context: context,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (dialogContext, setState) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Text('Automatic SMS Reminder', style: TextStyle(fontWeight: FontWeight.w900)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Send automatic due SMS'),
+              subtitle: const Text('On the due date, if money is still pending, DokanMate will send a normal SMS automatically.'),
+              value: enabled,
+              onChanged: (value) async {
+                if (value) {
+                  final permitted = await requestSmsPermission();
+                  if (!permitted && !await hasSmsPermission()) {
+                    if (dialogContext.mounted) await showMsg(dialogContext, 'SMS permission was not granted. Please allow SMS permission and turn this option on again.');
+                    return;
+                  }
+                }
+                setState(() => enabled = value);
+                await db.update('business', {'auto_sms_reminder': value ? 1 : 0}, where: 'id=1');
+                if (value) await syncAllSmsReminders(db);
+              },
+            ),
+            const Divider(),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.schedule_rounded),
+              title: const Text('Reminder time'),
+              subtitle: Text(DateFormat('hh:mm a').format(DateTime(2000, 1, 1, hour, minute))),
+              onTap: () async {
+                final picked = await showTimePicker(context: dialogContext, initialTime: TimeOfDay(hour: hour, minute: minute));
+                if (picked == null) return;
+                hour = picked.hour; minute = picked.minute;
+                await db.update('business', {'sms_reminder_hour': hour, 'sms_reminder_minute': minute}, where: 'id=1');
+                setState(() {});
+                if (enabled) await syncAllSmsReminders(db);
+              },
+            ),
+            const SizedBox(height: 8),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Example: Dear Customer, your payment of Rs. 2,000 is due at our shop. Please make the payment at your convenience. Thank you.', style: TextStyle(fontSize: 11, color: Color(0xFF777B86))),
+            ),
+          ],
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close'))],
+      ),
+    ),
+  );
 }
 
 Future<void> createDb(Database db, int version) async {
@@ -116,6 +245,15 @@ Future<void> ensureDb(Database db) async {
   final businessCols = await db.rawQuery('PRAGMA table_info(business)');
   if (!businessCols.any((x) => x['name'].toString() == 'language')) {
     await db.execute('ALTER TABLE business ADD COLUMN language TEXT DEFAULT "English"');
+  }
+  if (!businessCols.any((x) => x['name'].toString() == 'auto_sms_reminder')) {
+    await db.execute('ALTER TABLE business ADD COLUMN auto_sms_reminder INTEGER DEFAULT 0');
+  }
+  if (!businessCols.any((x) => x['name'].toString() == 'sms_reminder_hour')) {
+    await db.execute('ALTER TABLE business ADD COLUMN sms_reminder_hour INTEGER DEFAULT 10');
+  }
+  if (!businessCols.any((x) => x['name'].toString() == 'sms_reminder_minute')) {
+    await db.execute('ALTER TABLE business ADD COLUMN sms_reminder_minute INTEGER DEFAULT 0');
   }
   final salesCols = await db.rawQuery('PRAGMA table_info(sales)');
   if (!salesCols.any((x) => x['name'].toString() == 'place_of_supply')) await db.execute('ALTER TABLE sales ADD COLUMN place_of_supply TEXT DEFAULT ""');
@@ -1440,6 +1578,7 @@ class _InvoicePageState extends State<InvoicePage> {
       }
       await tx.insert('audit', {'action': widget.purchase ? 'Purchase' : 'Sale', 'date': today(), 'details': invoice});
     });
+    await syncAllSmsReminders(widget.db);
 
     if (mounted) {
       widget.refresh();
@@ -1599,33 +1738,6 @@ Future<CustomerRating> calculateCustomerRating(Database db, Map<String, Object?>
 }
 
 String _ratingStars(int stars) => stars <= 0 ? '—' : '★' * stars + (5 - stars > 0 ? '☆' * (5 - stars) : '');
-
-Future<void> _openCustomerMessage(BuildContext context, Map<String, Object?> party, CustomerRating rating, {required bool whatsapp}) async {
-  final rawPhone = (party['phone'] ?? '').toString().trim();
-  if (rawPhone.isEmpty) {
-    await showMsg(context, 'Customer phone number is not saved.');
-    return;
-  }
-
-  final digits = rawPhone.replaceAll(RegExp(r'[^0-9]'), '');
-  final phone = digits.length == 10 ? '91${digits}' : digits;
-  final name = (party['name'] ?? 'Customer').toString();
-  final due = rating.currentDue;
-  final message = due > 0.01
-      ? 'Hello ${name}, a payment of ${pdfMoney(due)} is currently due at our shop. Please make the payment at your convenience. Thank you.'
-      : 'Hello ${name}, thank you for your payments and continued support.';
-
-  try {
-    final uri = whatsapp
-        ? Uri.parse('https://wa.me/${phone}?text=${Uri.encodeComponent(message)}')
-        : Uri.parse('sms:${phone}?body=${Uri.encodeComponent(message)}');
-    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-      await showMsg(context, whatsapp ? 'WhatsApp could not be opened on this phone.' : 'SMS app could not be opened on this phone.');
-    }
-  } catch (_) {
-    if (context.mounted) await showMsg(context, 'Could not open the messaging app.');
-  }
-}
 
 Widget _ratingStat(String title, String value) => Column(
   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1987,6 +2099,7 @@ class MorePage extends StatelessWidget {
         }),
         menu(tr('Merchant Profile'), 'Store name, owner, phone, address, state, GSTIN and UPI — used on invoices', Icons.storefront_rounded, () => businessDialog(context, db)),
         menu(tr('Language'), 'English / বাংলা / हिन्दी', Icons.translate_rounded, () => languageDialog(context, db)),
+        menu('Automatic SMS Reminder', 'Automatically remind customers when their due date arrives', Icons.sms_rounded, () => smsReminderDialog(context, db)),
         menu('Backup & Restore', 'Google Drive backup, restore and automatic backup', Icons.backup_rounded, () {
           Navigator.push(context, MaterialPageRoute(builder: (_) => BackupRestorePage(db)));
         }),
@@ -2155,6 +2268,7 @@ Future<void> productDialog(BuildContext context, Database db, {VoidCallback? onS
                     'qty': opening,
                     'min_qty': minValue,
                   });
+                  await syncAllSmsReminders(db);
                   if (dialogContext.mounted) Navigator.pop(dialogContext);
                   onSaved?.call();
                 },
