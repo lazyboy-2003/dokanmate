@@ -1932,6 +1932,147 @@ class _PartiesPageState extends State<PartiesPage> {
 }
 
 
+Future<void> securityDialog(BuildContext context) async {
+  const storage = FlutterSecureStorage();
+  final auth = LocalAuthentication();
+  String? currentPin = await storage.read(key: 'app_pin');
+  bool biometricEnabled = await storage.read(key: 'app_biometric_enabled') == '1';
+
+  Future<void> savePin() async {
+    final controller = TextEditingController();
+    final value = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(currentPin == null ? 'Set App PIN' : 'Change App PIN'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          obscureText: true,
+          maxLength: 6,
+          decoration: const InputDecoration(
+            labelText: '4–6 digit PIN',
+            prefixIcon: Icon(Icons.password_rounded),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () {
+              final pin = controller.text.trim();
+              if (pin.length >= 4 && pin.length <= 6 && int.tryParse(pin) != null) {
+                Navigator.pop(ctx, pin);
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (value != null && value.isNotEmpty) {
+      currentPin = value;
+      await storage.write(key: 'app_pin', value: value);
+      await storage.write(key: 'app_lock_enabled', value: '1');
+    }
+  }
+
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setState) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Row(
+          children: [
+            Icon(Icons.security_rounded),
+            SizedBox(width: 8),
+            Text('Security'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.password_rounded),
+              title: Text(currentPin == null ? 'Set App PIN' : 'Change App PIN'),
+              subtitle: Text(currentPin == null ? 'Create a 4–6 digit PIN' : 'PIN is already set'),
+              onTap: () async {
+                await savePin();
+                setState(() {});
+              },
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              secondary: const Icon(Icons.fingerprint_rounded),
+              title: const Text('Fingerprint / Face unlock'),
+              subtitle: const Text('Use device biometrics when available'),
+              value: biometricEnabled,
+              onChanged: currentPin == null ? null : (value) async {
+                if (value) {
+                  try {
+                    final supported = await auth.isDeviceSupported();
+                    final canCheck = await auth.canCheckBiometrics;
+                    if (!supported || !canCheck) {
+                      if (ctx.mounted) {
+                        await showMsg(ctx, 'Biometric authentication is not available on this device.');
+                      }
+                      return;
+                    }
+
+                    // Test the real system biometric prompt before enabling it.
+                    // This prevents saving a biometric setting that cannot unlock
+                    // the app on the current phone.
+                    final verified = await auth.authenticate(
+                      localizedReason: 'Verify your fingerprint or face to enable biometric unlock',
+                      options: const AuthenticationOptions(
+                        biometricOnly: true,
+                        stickyAuth: true,
+                        useErrorDialogs: true,
+                      ),
+                    );
+
+                    if (!verified) {
+                      if (ctx.mounted) {
+                        await showMsg(ctx, 'Biometric verification was cancelled or failed. Biometric unlock was not enabled.');
+                      }
+                      return;
+                    }
+
+                    biometricEnabled = true;
+                    await storage.write(key: 'app_biometric_enabled', value: '1');
+                  } catch (e) {
+                    if (ctx.mounted) {
+                      await showMsg(ctx, 'Biometric setup failed. Please check that fingerprint/face is enrolled in phone Settings.');
+                    }
+                    return;
+                  }
+                } else {
+                  biometricEnabled = false;
+                  await storage.write(key: 'app_biometric_enabled', value: '0');
+                }
+                setState(() {});
+              },
+            ),
+            if (currentPin != null)
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'PIN remains available as a fallback if fingerprint/face authentication fails.',
+                  style: TextStyle(fontSize: 11, color: Color(0xFF777B86)),
+                ),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Done')),
+        ],
+      ),
+    ),
+  );
+}
+
+
 class MorePage extends StatelessWidget {
   final Database db;
   final VoidCallback refresh;
