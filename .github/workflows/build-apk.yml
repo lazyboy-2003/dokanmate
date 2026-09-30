@@ -29,6 +29,201 @@ jobs:
           sed -i 's/extends FlutterActivity/extends FlutterFragmentActivity/' "$ACTIVITY"
           sed -i 's/: FlutterActivity()/: FlutterFragmentActivity()/' "$ACTIVITY"
           sed -i '/<manifest /a\    <uses-permission android:name="android.permission.USE_BIOMETRIC"/>' android/app/src/main/AndroidManifest.xml
+      - name: Configure automatic SMS reminder
+        run: |
+          DIR="android/app/src/main/kotlin/com/dokanmate/dokanmate"
+          mkdir -p "$DIR"
+          cat > "$DIR/MainActivity.kt" <<'EOF'
+package com.dokanmate.dokanmate
+
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Bundle
+import androidx.core.app.ActivityCompat
+import io.flutter.embedding.android.FlutterFragmentActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
+
+class MainActivity : FlutterFragmentActivity() {
+    private val channelName = "dokanmate/sms"
+    private val requestCode = 9201
+    private var permissionResult: io.flutter.plugin.common.MethodChannel.Result? = null
+
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "hasSmsPermission" -> result.success(ActivityCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED)
+                "requestSmsPermission" -> {
+                    if (ActivityCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED) {
+                        result.success(true)
+                    } else {
+                        permissionResult = result
+                        ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.SEND_SMS), requestCode)
+                    }
+                }
+                "scheduleReminder" -> {
+                    val partyId = call.argument<Int>("partyId") ?: -1
+                    val trigger = call.argument<Long>("triggerAtMillis") ?: 0L
+                    SmsReminderScheduler.schedule(this, partyId, trigger)
+                    result.success(true)
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == this.requestCode) {
+            val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+            permissionResult?.success(granted)
+            permissionResult = null
+        }
+    }
+}
+EOF
+          cat > "$DIR/SmsReminderScheduler.kt" <<'EOF'
+package com.dokanmate.dokanmate
+
+import android.app.AlarmManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.database.sqlite.SQLiteDatabase
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
+
+object SmsReminderScheduler {
+    private const val ACTION = "com.dokanmate.AUTOMATIC_SMS_REMINDER"
+
+    fun schedule(context: Context, partyId: Int, triggerAtMillis: Long) {
+        if (partyId <= 0 || triggerAtMillis <= 0L) return
+        val alarm = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val intent = Intent(context, SmsReminderReceiver::class.java).apply {
+            action = ACTION
+            putExtra("partyId", partyId)
+        }
+        val requestCode = partyId * 100000 + ((triggerAtMillis / 86400000L) % 100000L).toInt()
+        val pending = PendingIntent.getBroadcast(context, requestCode, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        alarm.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMillis, pending)
+    }
+
+    fun scheduleAll(context: Context) {
+        val file = context.getDatabasePath("dokanmate.db")
+        if (!file.exists()) return
+        val db = SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READWRITE)
+        try {
+            ensureColumns(db)
+            val enabled = db.rawQuery("SELECT auto_sms_reminder FROM business WHERE id=1", null).use { it.moveToFirst() && it.getInt(0) == 1 }
+            if (!enabled) return
+            val hm = db.rawQuery("SELECT sms_reminder_hour, sms_reminder_minute FROM business WHERE id=1", null).use { if (it.moveToFirst()) intArrayOf(it.getInt(0), it.getInt(1)) else intArrayOf(10,0) }
+            val seen = HashSet<String>()
+            db.rawQuery("SELECT s.party_id, s.date, p.credit_days FROM sales s JOIN parties p ON p.id=s.party_id WHERE s.party_id IS NOT NULL AND s.due > 0 AND LOWER(COALESCE(p.type,'')) IN ('customer','both')", null).use { c ->
+                while (c.moveToNext()) {
+                    val partyId = c.getInt(0)
+                    val date = c.getString(1)
+                    val creditDays = c.getInt(2)
+                    val parsed = runCatching { SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(date) }.getOrNull() ?: continue
+                    val cal = Calendar.getInstance().apply {
+                        time = parsed
+                        add(Calendar.DAY_OF_YEAR, creditDays)
+                        set(Calendar.HOUR_OF_DAY, hm[0]); set(Calendar.MINUTE, hm[1]); set(Calendar.SECOND,0); set(Calendar.MILLISECOND,0)
+                    }
+                    var trigger = cal.timeInMillis
+                    if (trigger < System.currentTimeMillis()) trigger = System.currentTimeMillis() + 120000L
+                    val key = "$partyId-${cal.get(Calendar.YEAR)}-${cal.get(Calendar.DAY_OF_YEAR)}"
+                    if (seen.add(key)) schedule(context, partyId, trigger)
+                }
+            }
+        } finally { db.close() }
+    }
+
+    private fun ensureColumns(db: SQLiteDatabase) {
+        val cols = HashSet<String>()
+        db.rawQuery("PRAGMA table_info(business)", null).use { c -> while (c.moveToNext()) cols.add(c.getString(1)) }
+        if (!cols.contains("auto_sms_reminder")) db.execSQL("ALTER TABLE business ADD COLUMN auto_sms_reminder INTEGER DEFAULT 0")
+        if (!cols.contains("sms_reminder_hour")) db.execSQL("ALTER TABLE business ADD COLUMN sms_reminder_hour INTEGER DEFAULT 10")
+        if (!cols.contains("sms_reminder_minute")) db.execSQL("ALTER TABLE business ADD COLUMN sms_reminder_minute INTEGER DEFAULT 0")
+    }
+}
+EOF
+          cat > "$DIR/SmsReminderReceiver.kt" <<'EOF'
+package com.dokanmate.dokanmate
+
+import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.database.sqlite.SQLiteDatabase
+import android.telephony.SmsManager
+import androidx.core.content.ContextCompat
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+class SmsReminderReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != "com.dokanmate.AUTOMATIC_SMS_REMINDER") return
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) return
+        val partyId = intent.getIntExtra("partyId", -1)
+        if (partyId <= 0) return
+        val file = context.getDatabasePath("dokanmate.db")
+        if (!file.exists()) return
+        val db = SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READWRITE)
+        try {
+            val enabled = db.rawQuery("SELECT auto_sms_reminder FROM business WHERE id=1", null).use { it.moveToFirst() && it.getInt(0) == 1 }
+            if (!enabled) return
+            var name="Customer"; var phone=""; var balance=0.0; var shop="our shop"
+            db.rawQuery("SELECT name, phone, balance FROM parties WHERE id=?", arrayOf(partyId.toString())).use { c ->
+                if (!c.moveToFirst()) return
+                name=c.getString(0) ?: "Customer"; phone=c.getString(1) ?: ""; balance=c.getDouble(2)
+            }
+            if (balance <= 0.01) return
+            db.rawQuery("SELECT name FROM business WHERE id=1", null).use { if (it.moveToFirst()) shop=cString(it.getString(0), "our shop").also { shop=it } }
+            val digits=phone.filter { it.isDigit() }
+            if (digits.length < 10) return
+            val number=if(digits.length==10) "91$digits" else digits
+            val key="sent_${partyId}_${SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())}"
+            val prefs=context.getSharedPreferences("sms_reminders", Context.MODE_PRIVATE)
+            if(prefs.getBoolean(key,false)) return
+            val msg="Dear $name, your payment of Rs. ${String.format(Locale.US,"%.2f",balance)} is due at $shop. Please make the payment at your convenience. Thank you."
+            val sms=SmsManager.getDefault(); val parts=sms.divideMessage(msg)
+            if(parts.size>1) sms.sendMultipartTextMessage(number,null,parts,null,null) else sms.sendTextMessage(number,null,msg,null,null)
+            prefs.edit().putBoolean(key,true).apply()
+        } catch(_:Exception) {} finally { db.close() }
+    }
+    private fun cString(v:String?, fallback:String)=if(v.isNullOrBlank()) fallback else v
+}
+EOF
+          cat > "$DIR/SmsReminderBootReceiver.kt" <<'EOF'
+package com.dokanmate.dokanmate
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+class SmsReminderBootReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        if (intent?.action == Intent.ACTION_BOOT_COMPLETED) SmsReminderScheduler.scheduleAll(context)
+    }
+}
+EOF
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("android/app/src/main/AndroidManifest.xml")
+          s=p.read_text()
+          s=s.replace("</manifest>", """    <uses-permission android:name="android.permission.SEND_SMS"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <application>
+        <receiver android:name=".SmsReminderReceiver" android:exported="false"/>
+        <receiver android:name=".SmsReminderBootReceiver" android:enabled="true" android:exported="true">
+            <intent-filter><action android:name="android.intent.action.BOOT_COMPLETED"/></intent-filter>
+        </receiver>
+    </application>
+</manifest>""")
+          p.write_text(s)
+          PY
       - name: Remove generated test
         run: rm -f test/widget_test.dart
       - name: Get dependencies
