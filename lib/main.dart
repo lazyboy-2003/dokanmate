@@ -1,6 +1,6 @@
 import 'dart:io';
+import 'dart:ui' show DartPluginRegistrant;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -16,10 +16,11 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
+import 'package:telephony/telephony.dart';
 import 'backup_service.dart';
 
 final ValueNotifier<String> appLanguage = ValueNotifier<String>('English');
-const MethodChannel _smsChannel = MethodChannel('dokanmate/sms');
 
 const Map<String, Map<String, String>> _i18n = {
   'English': {
@@ -80,6 +81,7 @@ List<Locale> get supportedIndianLocales => const [
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await AndroidAlarmManager.initialize();
   final db = await openDatabase(
     p.join(await getDatabasesPath(), 'dokanmate.db'),
     version: 1,
@@ -95,130 +97,78 @@ Future<void> main() async {
   Future<void>.delayed(const Duration(seconds: 3), () => DokanMateBackupService.maybeAutoBackup(db));
 }
 
-Future<bool> requestSmsPermission() async {
+@pragma('vm:entry-point')
+Future<void> smsReminderBackgroundCallback() async {
+  DartPluginRegistrant.ensureInitialized();
   try {
-    final ok = await _smsChannel.invokeMethod<bool>('requestSmsPermission');
-    return ok == true;
-  } catch (_) {
-    return false;
-  }
-}
-
-Future<bool> hasSmsPermission() async {
-  try {
-    final ok = await _smsChannel.invokeMethod<bool>('hasSmsPermission');
-    return ok == true;
-  } catch (_) {
-    return false;
-  }
-}
-
-Future<void> scheduleSmsReminder({
-  required int partyId,
-  required DateTime dueDate,
-  required int hour,
-  required int minute,
-}) async {
-  try {
-    await _smsChannel.invokeMethod('scheduleReminder', {
-      'partyId': partyId,
-      'triggerAtMillis': dueDate.millisecondsSinceEpoch,
-    });
-  } catch (_) {}
-}
-
-Future<void> syncAllSmsReminders(Database db) async {
-  try {
-    final bRows = await db.query('business', where: 'id=1');
-    if (bRows.isEmpty) return;
-    final b = bRows.first;
-    if (((b['auto_sms_reminder'] as num?) ?? 0).toInt() != 1) return;
-    if (!await hasSmsPermission()) return;
-    final hour = ((b['sms_reminder_hour'] as num?) ?? 10).toInt();
-    final minute = ((b['sms_reminder_minute'] as num?) ?? 0).toInt();
+    final db = await openDatabase(p.join(await getDatabasesPath(), 'dokanmate.db'), version: 1, onCreate: createDb);
+    await ensureDb(db);
+    final businessRows = await db.query('business', where: 'id=1');
+    if (businessRows.isEmpty) { await db.close(); return; }
+    final business = businessRows.first;
+    if (((business['auto_sms_reminder'] as num?) ?? 0).toInt() != 1) { await db.close(); return; }
+    final todayDate = DateTime.now();
+    final todayKey = DateFormat('yyyy-MM-dd').format(todayDate);
     final rows = await db.rawQuery(
-      'SELECT s.party_id, s.date, p.credit_days FROM sales s JOIN parties p ON p.id=s.party_id '
-      'WHERE s.party_id IS NOT NULL AND s.due > 0 AND LOWER(COALESCE(p.type, "")) IN ("customer","both")'
+      'SELECT s.party_id, s.date, p.name, p.phone, p.credit_days, p.balance FROM sales s JOIN parties p ON p.id=s.party_id '
+      'WHERE s.party_id IS NOT NULL AND s.due > 0 AND LOWER(COALESCE(p.type, "")) IN ("customer","both") ORDER BY s.date ASC, s.id ASC'
     );
-    final seen = <String>{};
-    final now = DateTime.now();
+    final processed = <int>{};
+    final telephony = Telephony.backgroundInstance;
     for (final row in rows) {
       final partyId = (row['party_id'] as num?)?.toInt();
+      if (partyId == null || processed.contains(partyId)) continue;
+      processed.add(partyId);
+      final balance = ((row['balance'] as num?) ?? 0).toDouble();
+      if (balance <= 0.01) continue;
       final saleDate = _parseDate(row['date']?.toString());
-      if (partyId == null || saleDate == null) continue;
+      if (saleDate == null) continue;
       final creditDays = (row['credit_days'] as num?)?.toInt() ?? 0;
-      final base = DateTime(saleDate.year, saleDate.month, saleDate.day);
-      var trigger = DateTime(base.year, base.month, base.day + creditDays, hour, minute);
-      if (trigger.isBefore(now)) trigger = now.add(const Duration(minutes: 2));
-      final key = '$partyId-${trigger.year}-${trigger.month}-${trigger.day}';
-      if (seen.add(key)) {
-        await scheduleSmsReminder(partyId: partyId, dueDate: trigger, hour: hour, minute: minute);
-      }
+      final dueDate = DateTime(saleDate.year, saleDate.month, saleDate.day + creditDays);
+      if (dueDate.isAfter(todayDate)) continue;
+      final logKey = '${partyId}_${DateFormat('yyyyMMdd').format(dueDate)}';
+      final already = await db.query('sms_reminder_log', where: 'log_key=?', whereArgs: [logKey], limit: 1);
+      if (already.isNotEmpty) continue;
+      final rawPhone = (row['phone'] ?? '').toString().trim();
+      final digits = rawPhone.replaceAll(RegExp(r'[^0-9]'), '');
+      if (digits.length < 10) continue;
+      final phone = digits.length == 10 ? '91$digits' : digits;
+      final name = (row['name'] ?? 'Customer').toString();
+      final shop = (business['name'] ?? 'our shop').toString();
+      final amount = balance.toStringAsFixed(2);
+      final message = 'Dear $name, your payment of Rs. $amount is due at $shop. Please make the payment at your convenience. Thank you.';
+      try {
+        await telephony.sendSms(to: phone, message: message, isMultipart: true);
+        await db.insert('sms_reminder_log', {'log_key': logKey, 'party_id': partyId, 'sent_date': todayKey});
+      } catch (_) {}
     }
+    await db.close();
   } catch (_) {}
 }
 
-Future<void> smsReminderDialog(BuildContext context, Database db) async {
+Future<DateTime> _nextSmsReminderTime(Database db) async {
   final rows = await db.query('business', where: 'id=1');
-  if (rows.isEmpty) return;
-  final b = rows.first;
-  bool enabled = ((b['auto_sms_reminder'] as num?) ?? 0).toInt() == 1;
-  int hour = ((b['sms_reminder_hour'] as num?) ?? 10).toInt();
-  int minute = ((b['sms_reminder_minute'] as num?) ?? 0).toInt();
+  final hour = rows.isEmpty ? 10 : ((rows.first['sms_reminder_hour'] as num?) ?? 10).toInt();
+  final minute = rows.isEmpty ? 0 : ((rows.first['sms_reminder_minute'] as num?) ?? 0).toInt();
+  final now = DateTime.now();
+  var next = DateTime(now.year, now.month, now.day, hour, minute);
+  if (!next.isAfter(now)) next = next.add(const Duration(days: 1));
+  return next;
+}
 
-  await showDialog(
-    context: context,
-    builder: (dialogContext) => StatefulBuilder(
-      builder: (dialogContext, setState) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: const Text('Automatic SMS Reminder', style: TextStyle(fontWeight: FontWeight.w900)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Send automatic due SMS'),
-              subtitle: const Text('On the due date, if money is still pending, DokanMate will send a normal SMS automatically.'),
-              value: enabled,
-              onChanged: (value) async {
-                if (value) {
-                  final permitted = await requestSmsPermission();
-                  if (!permitted && !await hasSmsPermission()) {
-                    if (dialogContext.mounted) await showMsg(dialogContext, 'SMS permission was not granted. Please allow SMS permission and turn this option on again.');
-                    return;
-                  }
-                }
-                setState(() => enabled = value);
-                await db.update('business', {'auto_sms_reminder': value ? 1 : 0}, where: 'id=1');
-                if (value) await syncAllSmsReminders(db);
-              },
-            ),
-            const Divider(),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.schedule_rounded),
-              title: const Text('Reminder time'),
-              subtitle: Text(DateFormat('hh:mm a').format(DateTime(2000, 1, 1, hour, minute))),
-              onTap: () async {
-                final picked = await showTimePicker(context: dialogContext, initialTime: TimeOfDay(hour: hour, minute: minute));
-                if (picked == null) return;
-                hour = picked.hour; minute = picked.minute;
-                await db.update('business', {'sms_reminder_hour': hour, 'sms_reminder_minute': minute}, where: 'id=1');
-                setState(() {});
-                if (enabled) await syncAllSmsReminders(db);
-              },
-            ),
-            const SizedBox(height: 8),
-            const Align(
-              alignment: Alignment.centerLeft,
-              child: Text('Example: Dear Customer, your payment of Rs. 2,000 is due at our shop. Please make the payment at your convenience. Thank you.', style: TextStyle(fontSize: 11, color: Color(0xFF777B86))),
-            ),
-          ],
-        ),
-        actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close'))],
-      ),
-    ),
-  );
+Future<void> syncSmsReminderAlarm(Database db) async {
+  try {
+    final rows = await db.query('business', where: 'id=1');
+    if (rows.isEmpty || ((rows.first['auto_sms_reminder'] as num?) ?? 0).toInt() != 1) return;
+    await AndroidAlarmManager.oneShotAt(
+      await _nextSmsReminderTime(db),
+      882211,
+      smsReminderBackgroundCallback,
+      allowWhileIdle: true,
+      wakeup: true,
+      rescheduleOnReboot: true,
+    );
+  } catch (_) {}
 }
 
 Future<void> createDb(Database db, int version) async {
@@ -255,6 +205,7 @@ Future<void> ensureDb(Database db) async {
   if (!businessCols.any((x) => x['name'].toString() == 'sms_reminder_minute')) {
     await db.execute('ALTER TABLE business ADD COLUMN sms_reminder_minute INTEGER DEFAULT 0');
   }
+  await db.execute('CREATE TABLE IF NOT EXISTS sms_reminder_log(id INTEGER PRIMARY KEY AUTOINCREMENT, log_key TEXT UNIQUE, party_id INTEGER, sent_date TEXT)');
   final salesCols = await db.rawQuery('PRAGMA table_info(sales)');
   if (!salesCols.any((x) => x['name'].toString() == 'place_of_supply')) await db.execute('ALTER TABLE sales ADD COLUMN place_of_supply TEXT DEFAULT ""');
   final saleItemCols = await db.rawQuery('PRAGMA table_info(sale_items)');
@@ -1578,7 +1529,7 @@ class _InvoicePageState extends State<InvoicePage> {
       }
       await tx.insert('audit', {'action': widget.purchase ? 'Purchase' : 'Sale', 'date': today(), 'details': invoice});
     });
-    await syncAllSmsReminders(widget.db);
+    await syncSmsReminderAlarm(widget.db);
 
     if (mounted) {
       widget.refresh();
@@ -2268,7 +2219,7 @@ Future<void> productDialog(BuildContext context, Database db, {VoidCallback? onS
                     'qty': opening,
                     'min_qty': minValue,
                   });
-                  await syncAllSmsReminders(db);
+                  await syncSmsReminderAlarm(db);
                   if (dialogContext.mounted) Navigator.pop(dialogContext);
                   onSaved?.call();
                 },
