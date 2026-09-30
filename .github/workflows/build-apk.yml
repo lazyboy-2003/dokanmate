@@ -31,3 +31,5 @@ jobs:
           name: dokanmate-release-apk
           path: build/app/outputs/flutter-apk/app-release.apk
           retention-days: 30
+
+# rebuild after DokanMate fixes
