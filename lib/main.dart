@@ -1691,10 +1691,10 @@ Future<void> exportPdf(BuildContext context, Database db) async {
     final cogs = (await db.rawQuery('SELECT COALESCE(SUM(qty * cost),0) total FROM sale_items')).first;
     final ex = (await db.rawQuery('SELECT COALESCE(SUM(amount),0) total FROM expenses')).first;
     final result = (s['taxable'] as num).toDouble() - (cogs['total'] as num).toDouble() - (ex['total'] as num).toDouble();
-    final doc = pw.Document();
     final pdfFont = await PdfGoogleFonts.notoSansRegular();
     final pdfBold = await PdfGoogleFonts.notoSansBold();
     final pdfTheme = pw.ThemeData.withFont(base: pdfFont, bold: pdfBold);
+    final doc = pw.Document(theme: pdfTheme);
 
     doc.addPage(
       pw.MultiPage(
@@ -1758,7 +1758,7 @@ Future<void> invoicePdf(BuildContext context, Database db, int id, bool purchase
     final pdfBold = await PdfGoogleFonts.notoSansBold();
     final pdfTheme = pw.ThemeData.withFont(base: pdfFont, bold: pdfBold);
     doc.addPage(
-      pw.MultiPage(theme: pdfTheme,
+      pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(28),
         footer: (ctx) => pw.Container(
