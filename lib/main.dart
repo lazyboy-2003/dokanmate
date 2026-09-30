@@ -571,7 +571,7 @@ class _InvoicePageState extends State<InvoicePage> {
   List<Map<String, Object?>> products = [];
   List<InvoiceLine> lines = [];
   int? partyId;
-  String mode = 'Cash';
+  String mode = '';
   final paid = TextEditingController();
 
   double get subtotal => lines.fold(0, (sum, line) => sum + line.qty * line.rate);
@@ -590,7 +590,7 @@ class _InvoicePageState extends State<InvoicePage> {
   Future<void> load() async {
     final pRows = await widget.db.query(
       'parties',
-      where: 'type=?',
+      where: "type=? OR type='both'",
       whereArgs: [widget.purchase ? 'supplier' : 'customer'],
       orderBy: 'name',
     );
@@ -641,16 +641,23 @@ class _InvoicePageState extends State<InvoicePage> {
           ),
           const SizedBox(height: 16),
           _label(widget.purchase ? 'SUPPLIER / CREDITOR' : 'CUSTOMER'),
-          DropdownButtonFormField<int?>(
-            value: partyId,
-            isExpanded: true,
-            decoration: InputDecoration(labelText: widget.purchase ? 'Select supplier' : 'Select customer'),
-            items: [
-              const DropdownMenuItem<int?>(value: null, child: Text('Walk-in / Cash')),
-              ...parties.map((p) => DropdownMenuItem<int?>(value: p['id'] as int, child: Text(p['name'].toString()))),
-            ],
-            onChanged: (value) => setState(() => partyId = value),
-          ),
+          Row(children: [
+            Expanded(child: OutlinedButton.icon(
+              onPressed: () async {
+                final picked = await partyPicker(context, widget.db, widget.purchase ? 'supplier' : 'customer');
+                if (picked != null && mounted) setState(() => partyId = picked);
+              },
+              icon: const Icon(Icons.person_search_rounded),
+              label: Text(partyId == null ? (widget.purchase ? 'Select / Search Supplier' : 'Select / Search Customer') : (parties.firstWhere((p) => p['id'] == partyId, orElse: () => {'name': 'Selected Party'})['name']?.toString() ?? 'Selected Party')),
+              style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(52), alignment: Alignment.centerLeft, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
+            )),
+            const SizedBox(width: 8),
+            IconButton.filled(
+              tooltip: widget.purchase ? 'Add Supplier' : 'Add Customer',
+              onPressed: () async { await partyDialog(context, widget.db, widget.purchase ? 'supplier' : 'customer'); await load(); },
+              icon: const Icon(Icons.add_rounded),
+            ),
+          ]),
           const SizedBox(height: 18),
           _label('ITEMS'),
           FilledButton.tonalIcon(
@@ -671,12 +678,10 @@ class _InvoicePageState extends State<InvoicePage> {
           ),
           const SizedBox(height: 8),
           DropdownButtonFormField<String>(
-            value: mode,
-            decoration: const InputDecoration(labelText: 'Payment mode'),
-            items: ['Cash', 'UPI', 'Bank', 'Card', 'Cheque', 'Credit']
-                .map((x) => DropdownMenuItem(value: x, child: Text(x)))
-                .toList(),
-            onChanged: (value) => setState(() => mode = value!),
+            value: mode.isEmpty ? null : mode,
+            decoration: const InputDecoration(labelText: 'Payment mode *', hintText: 'Select payment mode', prefixIcon: Icon(Icons.payments_rounded)),
+            items: ['Cash', 'UPI', 'Bank', 'Card', 'Cheque', 'Credit'].map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(),
+            onChanged: (value) => setState(() => mode = value ?? ''),
           ),
           const SizedBox(height: 12),
           Container(
@@ -802,6 +807,14 @@ class _InvoicePageState extends State<InvoicePage> {
   Future<void> saveInvoice() async {
     if (lines.isEmpty) {
       showMsg(context, 'Add at least one product.');
+      return;
+    }
+    if (mode.isEmpty) {
+      showMsg(context, 'Please select a payment mode.');
+      return;
+    }
+    if (mode == 'Credit' && partyId == null) {
+      showMsg(context, 'Credit sale/purchase requires a customer or supplier.');
       return;
     }
     if (paidAmount < 0 || paidAmount > total) {
@@ -1214,6 +1227,49 @@ Future<void> productDialog(BuildContext context, Database db, {VoidCallback? onS
         },
       );
     },
+  );
+}
+
+Future<int?> partyPicker(BuildContext context, Database db, String type) async {
+  final rows = await db.query('parties', where: "type=? OR type='both'", whereArgs: [type], orderBy: 'name');
+  String query = '';
+  return showDialog<int?>(
+    context: context,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (dialogContext, setDialogState) {
+        final filtered = rows.where((p) {
+          final q = query.toLowerCase().trim();
+          return q.isEmpty || p['name'].toString().toLowerCase().contains(q) || p['phone'].toString().toLowerCase().contains(q);
+        }).toList();
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+          title: Text(type == 'supplier' ? 'Select Supplier' : 'Select Customer', style: const TextStyle(fontWeight: FontWeight.w900)),
+          content: SizedBox(
+            width: 420, height: 420,
+            child: Column(children: [
+              TextField(autofocus: true, decoration: const InputDecoration(hintText: 'Search by name or phone', prefixIcon: Icon(Icons.search_rounded)), onChanged: (v) => setDialogState(() => query = v)),
+              const SizedBox(height: 10),
+              Expanded(child: filtered.isEmpty
+                ? Center(child: Text('No ${type == 'supplier' ? 'supplier' : 'customer'} found. Tap + to add one.'))
+                : ListView.separated(
+                    itemCount: filtered.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (_, i) {
+                      final p = filtered[i]; final n = p['name'].toString();
+                      return ListTile(
+                        leading: CircleAvatar(child: Text(n.isEmpty ? '?' : n.substring(0, 1).toUpperCase())),
+                        title: Text(n, style: const TextStyle(fontWeight: FontWeight.w800)),
+                        subtitle: Text((p['phone'] ?? '').toString()),
+                        onTap: () => Navigator.pop(dialogContext, p['id'] as int),
+                      );
+                    },
+                  )),
+            ]),
+          ),
+          actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel'))],
+        );
+      },
+    ),
   );
 }
 
@@ -1787,31 +1843,27 @@ class PaymentHistoryPage extends StatelessWidget {
 
 Future<void> languageDialog(BuildContext context, Database db) async {
   String selected = appLanguage.value;
+  const languages = ['English','हिन्दी','বাংলা','मराठी','తెలుగు','தமிழ்','ગુજરાતી','اردو','ಕನ್ನಡ','ଓଡ଼ିଆ','മലയാളം','ਪੰਜਾਬੀ','অসমীয়া'];
   await showDialog(
     context: context,
-    builder: (dialogContext) {
-      return AlertDialog(
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (dialogContext, setDialogState) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: Text(tr('Language'), style: const TextStyle(fontWeight: FontWeight.w900)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: ['English', 'বাংলা', 'हिन्दी'].map((lang) {
-            return RadioListTile<String>(
-              value: lang,
-              groupValue: selected,
-              title: Text(lang),
-              onChanged: (value) async {
-                if (value == null) return;
-                selected = value;
-                appLanguage.value = value;
-                await db.update('business', {'language': value}, where: 'id=1');
-                if (dialogContext.mounted) Navigator.pop(dialogContext);
-              },
-            );
-          }).toList(),
-        ),
-      );
-    },
+        title: const Text('App Language', style: TextStyle(fontWeight: FontWeight.w900)),
+        content: SizedBox(width: 360, height: 440, child: ListView(
+          children: languages.map((lang) => RadioListTile<String>(
+            value: lang, groupValue: selected, title: Text(lang),
+            onChanged: (value) async {
+              if (value == null) return;
+              setDialogState(() => selected = value);
+              appLanguage.value = value;
+              await db.update('business', {'language': value}, where: 'id=1');
+              if (dialogContext.mounted) Navigator.pop(dialogContext);
+            },
+          )).toList(),
+        )),
+      ),
+    ),
   );
 }
 
