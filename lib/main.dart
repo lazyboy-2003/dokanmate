@@ -1864,9 +1864,25 @@ Future<void> invoicePdf(BuildContext context, Database db, int id, bool purchase
                         decoration: pw.BoxDecoration(color: PdfColors.white, borderRadius: pw.BorderRadius.circular(8)),
                         child: pw.BarcodeWidget(
                           barcode: pw.Barcode.qrCode(),
-                          data: purchase
-                              ? 'SUPPLIER\\nName: ${x['party'] ?? 'Supplier'}\\nPhone: ${x['party_phone'] ?? ''}\\nAddress: ${x['party_address'] ?? ''}\\nGSTIN: ${x['party_gstin'] ?? ''}\\nState: ${x['party_state'] ?? ''}'
-                              : 'SHOP DETAILS\\nName: ${business['name'] ?? ''}\\nOwner: ${business['owner'] ?? ''}\\nAddress: ${business['address'] ?? ''}\\nPhone: ${business['phone'] ?? ''}\\nGSTIN: ${business['gstin'] ?? ''}\\nUPI: ${business['upi'] ?? ''}\\nState: ${business['state'] ?? ''}',
+                          data: (purchase
+                              ? [
+                                  'SUPPLIER',
+                                  'Name: ${x['party'] ?? 'Supplier'}',
+                                  'Phone: ${x['party_phone'] ?? ''}',
+                                  'Address: ${x['party_address'] ?? ''}',
+                                  'GSTIN: ${x['party_gstin'] ?? ''}',
+                                  'State: ${x['party_state'] ?? ''}',
+                                ]
+                              : [
+                                  'SHOP DETAILS',
+                                  'Name: ${business['name'] ?? ''}',
+                                  'Owner: ${business['owner'] ?? ''}',
+                                  'Address: ${business['address'] ?? ''}',
+                                  'Phone: ${business['phone'] ?? ''}',
+                                  'GSTIN: ${business['gstin'] ?? ''}',
+                                  'UPI: ${business['upi'] ?? ''}',
+                                  'State: ${business['state'] ?? ''}',
+                                ]).join('\\n'),
                           drawText: false,
                         ),
                       ),
