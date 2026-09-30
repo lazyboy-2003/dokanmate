@@ -1133,6 +1133,7 @@ class _InvoicePageState extends State<InvoicePage> {
             await tx.rawUpdate('UPDATE products SET qty=qty+? WHERE id=?', [reverseDelta, productId]);
           }
         }
+        await tx.delete('stock_moves', where: 'reference=?', whereArgs: [old['invoice']]);
         await tx.delete(widget.purchase ? 'purchase_items' : 'sale_items', where: widget.purchase ? 'purchase_id=?' : 'sale_id=?', whereArgs: [widget.editId]);
         await tx.update(widget.purchase ? 'purchases' : 'sales', {
           'party_id': partyId, 'subtotal': subtotal, 'discount': discount, 'taxable': taxable,
