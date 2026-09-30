@@ -14,6 +14,7 @@ import 'package:printing/printing.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:local_auth/local_auth.dart';
+import 'backup_service.dart';
 
 final ValueNotifier<String> appLanguage = ValueNotifier<String>('English');
 
@@ -87,6 +88,7 @@ Future<void> main() async {
     appLanguage.value = langRows.first['language'].toString();
   }
   runApp(DokanMate(db));
+  Future<void>.delayed(const Duration(seconds: 3), () => DokanMateBackupService.maybeAutoBackup(db));
 }
 
 Future<void> createDb(Database db, int version) async {
@@ -1718,7 +1720,9 @@ class MorePage extends StatelessWidget {
         }),
         menu(tr('Merchant Profile'), 'Store name, owner, phone, address, state, GSTIN and UPI — used on invoices', Icons.storefront_rounded, () => businessDialog(context, db)),
         menu(tr('Language'), 'English / বাংলা / हिन्दी', Icons.translate_rounded, () => languageDialog(context, db)),
-        menu('Backup & Restore', 'Offline data backup', Icons.backup_rounded, () => showMsg(context, 'Backup and restore will be added next.')),
+        menu('Backup & Restore', 'Google Drive backup, restore and automatic backup', Icons.backup_rounded, () {
+          Navigator.push(context, MaterialPageRoute(builder: (_) => BackupRestorePage(db)));
+        }),
         menu('PIN / Biometric', 'Protect business data with app PIN and fingerprint / face', Icons.lock_rounded, () => securityDialog(context)),
       ],
     );
