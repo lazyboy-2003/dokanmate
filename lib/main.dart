@@ -269,8 +269,14 @@ class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && !loading) {
-      _checkLock(force: true);
+    // Do not start a second biometric prompt while the first system prompt
+    // is active. The biometric dialog itself can temporarily change lifecycle.
+    if (state == AppLifecycleState.resumed && !loading && !authenticating) {
+      Future<void>.delayed(const Duration(milliseconds: 350), () {
+        if (mounted && !authenticating && locked) {
+          _checkLock(force: true);
+        }
+      });
     }
   }
 
@@ -290,22 +296,27 @@ class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
     if (authenticating || !mounted) return;
     authenticating = true;
 
-    // First try biometric. Do NOT make the whole app depend on biometric
-    // configuration; PIN must remain an independent fallback.
     try {
-      final biometricEnabled = await _storage.read(key: 'app_biometric_enabled') == '1';
+      final biometricEnabled =
+          await _storage.read(key: 'app_biometric_enabled') == '1';
+
       if (biometricEnabled) {
+        // Do not gate authentication on getAvailableBiometrics(). On some
+        // Android/OEM combinations that list can be empty even though the
+        // system biometric prompt is usable.
         final supported = await _auth.isDeviceSupported();
-        final available = await _auth.getAvailableBiometrics();
-        if (supported && available.isNotEmpty) {
+        final canCheck = await _auth.canCheckBiometrics;
+
+        if (supported && canCheck) {
           final ok = await _auth.authenticate(
-            localizedReason: 'Unlock DokanMate',
+            localizedReason: 'Use your fingerprint or face to unlock DokanMate',
             options: const AuthenticationOptions(
               biometricOnly: true,
               stickyAuth: true,
               useErrorDialogs: true,
             ),
           );
+
           if (ok && mounted) {
             authenticating = false;
             setState(() { locked = false; error = null; });
@@ -313,8 +324,10 @@ class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
           }
         }
       }
-    } catch (_) {
-      // Ignore biometric errors and always fall back to app PIN.
+    } catch (e) {
+      // PIN is always available as a fallback. Keep the actual error for
+      // diagnostics instead of silently hiding a biometric integration issue.
+      error = 'Biometric authentication unavailable';
     }
 
     authenticating = false;
@@ -1606,18 +1619,38 @@ Future<void> securityDialog(BuildContext context) async {
                 if (value) {
                   try {
                     final supported = await auth.isDeviceSupported();
-                    final available = await auth.getAvailableBiometrics();
-                    if (!supported || available.isEmpty) {
+                    final canCheck = await auth.canCheckBiometrics;
+                    if (!supported || !canCheck) {
                       if (ctx.mounted) {
-                        await showMsg(ctx, 'No enrolled fingerprint/face biometric is available on this device.');
+                        await showMsg(ctx, 'Biometric authentication is not available on this device.');
                       }
                       return;
                     }
+
+                    // Test the real system biometric prompt before enabling it.
+                    // This prevents saving a biometric setting that cannot unlock
+                    // the app on the current phone.
+                    final verified = await auth.authenticate(
+                      localizedReason: 'Verify your fingerprint or face to enable biometric unlock',
+                      options: const AuthenticationOptions(
+                        biometricOnly: true,
+                        stickyAuth: true,
+                        useErrorDialogs: true,
+                      ),
+                    );
+
+                    if (!verified) {
+                      if (ctx.mounted) {
+                        await showMsg(ctx, 'Biometric verification was cancelled or failed. Biometric unlock was not enabled.');
+                      }
+                      return;
+                    }
+
                     biometricEnabled = true;
                     await storage.write(key: 'app_biometric_enabled', value: '1');
-                  } catch (_) {
+                  } catch (e) {
                     if (ctx.mounted) {
-                      await showMsg(ctx, 'Biometric unlock is not available on this device.');
+                      await showMsg(ctx, 'Biometric setup failed. Please check that fingerprint/face is enrolled in phone Settings.');
                     }
                     return;
                   }
