@@ -1557,7 +1557,7 @@ Future<CustomerRating> calculateCustomerRating(Database db, Map<String, Object?>
     }
   }
 
-  final currentDue = ((party['balance'] as num?) ?? 0).toDouble().clamp(0, double.infinity);
+  final currentDue = ((party['balance'] as num?) ?? 0).toDouble().clamp(0, double.infinity).toDouble();
   final percent = completed == 0 ? 0.0 : (onTime / completed) * 100;
 
   int stars;
