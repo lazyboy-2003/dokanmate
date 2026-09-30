@@ -1972,7 +1972,6 @@ class MorePage extends StatelessWidget {
         menu(tr('Merchant Profile'), 'Store name, owner, phone, address, state, GSTIN and UPI — used on invoices', Icons.storefront_rounded, () => businessDialog(context, db)),
         menu(tr('Language'), 'English / বাংলা / हिन्दी', Icons.translate_rounded, () => languageDialog(context, db)),
         menu('Automatic SMS Reminder', 'Automatically remind customers when their due date arrives', Icons.sms_rounded, () => smsReminderDialog(context, db)),
-        }),
         menu('PIN / Biometric', 'Protect business data with app PIN and fingerprint / face', Icons.lock_rounded, () => securityDialog(context)),
       ],
     );
