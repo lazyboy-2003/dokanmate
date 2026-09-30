@@ -21,6 +21,13 @@ jobs:
         run: flutter create --platforms=android --org com.dokanmate .
       - name: Set Android NDK version
         run: sed -i '/android {/a\    ndkVersion = "27.0.12077973"' android/app/build.gradle.kts
+      - name: Configure biometric Android activity
+        run: |
+          ACTIVITY=$(find android/app/src/main -name MainActivity.kt | head -n 1)
+          sed -i 's/import io.flutter.embedding.android.FlutterActivity/import io.flutter.embedding.android.FlutterFragmentActivity/' "$ACTIVITY"
+          sed -i 's/extends FlutterActivity/extends FlutterFragmentActivity/' "$ACTIVITY"
+          sed -i 's/: FlutterActivity()/: FlutterFragmentActivity()/' "$ACTIVITY"
+          sed -i '/<manifest /a\    <uses-permission android:name="android.permission.USE_BIOMETRIC"/>' android/app/src/main/AndroidManifest.xml
       - name: Remove generated test
         run: rm -f test/widget_test.dart
       - name: Get dependencies
