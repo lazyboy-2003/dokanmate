@@ -93,7 +93,7 @@ Future<void> main() async {
     appLanguage.value = langRows.first['language'].toString();
   }
   runApp(DokanMate(db));
-  Future<void>.delayed(const Duration(seconds: 1), () => syncAllSmsReminders(db));
+  Future<void>.delayed(const Duration(seconds: 1), () => syncSmsReminderAlarm(db));
   Future<void>.delayed(const Duration(seconds: 3), () => DokanMateBackupService.maybeAutoBackup(db));
 }
 
@@ -169,6 +169,92 @@ Future<void> syncSmsReminderAlarm(Database db) async {
       rescheduleOnReboot: true,
     );
   } catch (_) {}
+}
+
+Future<void> requestSmsPermission() async {
+  try {
+    await Telephony.instance.requestSmsPermissions();
+  } catch (_) {}
+}
+
+Future<void> smsReminderDialog(BuildContext context, Database db) async {
+  final rows = await db.query('business', where: 'id=1');
+  if (rows.isEmpty) return;
+  final b = rows.first;
+  bool enabled = ((b['auto_sms_reminder'] as num?) ?? 0).toInt() == 1;
+  int hour = ((b['sms_reminder_hour'] as num?) ?? 10).toInt();
+  int minute = ((b['sms_reminder_minute'] as num?) ?? 0).toInt();
+
+  await showDialog(
+    context: context,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (dialogContext, setState) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Text('Automatic SMS Reminder', style: TextStyle(fontWeight: FontWeight.w900)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Send automatic due SMS'),
+              subtitle: const Text('On the due date, if payment is still pending, DokanMate will send a normal SMS automatically.'),
+              value: enabled,
+              onChanged: (value) async {
+                if (value) {
+                  try {
+                    final granted = await Telephony.instance.requestSmsPermissions() ?? false;
+                    if (!granted) {
+                      if (dialogContext.mounted) await showMsg(dialogContext, 'SMS permission was not granted. Please allow SMS permission and turn this option on again.');
+                      return;
+                    }
+                  } catch (_) {
+                    if (dialogContext.mounted) await showMsg(dialogContext, 'SMS permission could not be requested on this phone.');
+                    return;
+                  }
+                }
+                setState(() => enabled = value);
+                await db.update('business', {'auto_sms_reminder': value ? 1 : 0}, where: 'id=1');
+                if (value) await syncSmsReminderAlarm(db);
+              },
+            ),
+            const Divider(),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.schedule_rounded),
+              title: const Text('Reminder time'),
+              subtitle: Text(DateFormat('hh:mm a').format(DateTime(2000, 1, 1, hour, minute))),
+              onTap: () async {
+                final picked = await showTimePicker(
+                  context: dialogContext,
+                  initialTime: TimeOfDay(hour: hour, minute: minute),
+                );
+                if (picked == null) return;
+                hour = picked.hour;
+                minute = picked.minute;
+                await db.update('business', {
+                  'sms_reminder_hour': hour,
+                  'sms_reminder_minute': minute,
+                }, where: 'id=1');
+                setState(() {});
+                if (enabled) await syncSmsReminderAlarm(db);
+              },
+            ),
+            const SizedBox(height: 8),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Example: Dear Customer, your payment of Rs. 2,000 is due at our shop. Please make the payment at your convenience. Thank you.',
+                style: TextStyle(fontSize: 11, color: Color(0xFF777B86)),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close')),
+        ],
+      ),
+    ),
+  );
 }
 
 Future<void> createDb(Database db, int version) async {
