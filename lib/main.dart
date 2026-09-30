@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:sqflite/sqflite.dart';
-import 'package:path/path.dart';
+import 'package:path/path.dart' as p;
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -13,7 +13,7 @@ import 'package:intl/intl.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final db = await openDatabase(
-    join(await getDatabasesPath(), 'dokanmate.db'),
+    p.join(await getDatabasesPath(), 'dokanmate.db'),
     version: 1,
     onCreate: (db, v) async {
       await db.execute('CREATE TABLE sales(id INTEGER PRIMARY KEY AUTOINCREMENT, amount REAL, cost REAL, paid REAL)');
@@ -454,7 +454,7 @@ class _ExportPageState extends State<ExportPage> {
 
   Future<Directory> folder() async {
     final base = await getApplicationDocumentsDirectory();
-    final f = Directory(join(base.path, 'DokanMate_Exports'));
+    final f = Directory(p.join(base.path, 'DokanMate_Exports'));
     if (!await f.exists()) await f.create(recursive: true);
     return f;
   }
@@ -491,7 +491,7 @@ class _ExportPageState extends State<ExportPage> {
 
       final bytes = book.save();
       if (bytes == null) throw Exception('Workbook creation failed');
-      final file = File(join((await folder()).path, 'DokanMate_' + stamp() + '.xlsx'));
+      final file = File(p.join((await folder()).path, 'DokanMate_' + stamp() + '.xlsx'));
       await file.writeAsBytes(bytes, flush: true);
       await shareFile(file.path, 'DokanMate Excel export');
       done('Excel file created and ready to share.');
@@ -520,7 +520,7 @@ class _ExportPageState extends State<ExportPage> {
       b.writeln('ID,Product,Quantity,Buy Price,Sell Price,Stock Value');
       for (final x in products) b.writeln(x['id'].toString() + ',"' + csv(x['name']) + '",' + x['qty'].toString() + ',' + x['buy'].toString() + ',' + x['sell'].toString() + ',' + ((x['qty'] as num) * (x['buy'] as num)).toString());
 
-      final file = File(join((await folder()).path, 'DokanMate_' + stamp() + '.csv'));
+      final file = File(p.join((await folder()).path, 'DokanMate_' + stamp() + '.csv'));
       await file.writeAsString(b.toString(), flush: true);
       await shareFile(file.path, 'DokanMate CSV export');
       done('CSV file created and ready to share.');
@@ -580,7 +580,7 @@ class _ExportPageState extends State<ExportPage> {
         ],
       ));
 
-      final file = File(join((await folder()).path, 'DokanMate_Report_' + stamp() + '.pdf'));
+      final file = File(p.join((await folder()).path, 'DokanMate_Report_' + stamp() + '.pdf'));
       await file.writeAsBytes(await doc.save(), flush: true);
       await shareFile(file.path, 'DokanMate PDF report');
       done('PDF report created and ready to share.');
@@ -810,17 +810,44 @@ reportCard('Excel Workbook','Separate sheets for sales, purchase, parties, produ
 reportCard('CSV Export','Portable business data',Icons.data_object_rounded,()=>coreCsv(c,db)),
 reportCard('PDF Report','A4 report ready to share or print',Icons.picture_as_pdf_rounded,()=>corePdf(c,db))
 ]));}
-Future<Directory> coreFolder()async{final d=await getApplicationDocumentsDirectory();final f=Directory(join(d.path,'DokanMate_Exports'));if(!await f.exists())await f.create(recursive:true);return f;}
+Future<Directory> coreFolder()async{final d=await getApplicationDocumentsDirectory();final f=Directory(p.join(d.path,'DokanMate_Exports'));if(!await f.exists())await f.create(recursive:true);return f;}
 Future<void> coreShare(String p,String t)async=>Share.shareXFiles([XFile(p)],text:t);
-Future<void> coreExcel(BuildContext c,Database db)async{try{final book=Excel.createExcel();for(final t in ['dm_sales','dm_purchases','dm_parties','dm_products','dm_payments','dm_expenses','dm_stock']){final r=await db.query(t);final sh=book[t];if(r.isEmpty){sh.appendRow([TextCellValue('No data')]);continue;}final k=r.first.keys.toList();sh.appendRow(k.map((x)=>TextCellValue(x)).toList());for(final row in r)sh.appendRow(k.map((x)=>excelCell(row[x])).toList());}final bytes=book.save();if(bytes==null)throw Exception('Workbook failed');final f=File(join((await coreFolder()).path,'DokanMate_'+DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())+'.xlsx'));await f.writeAsBytes(bytes,flush:true);await coreShare(f.path,'DokanMate Excel export');msg(c,'Excel exported successfully.');}catch(e){msg(c,'Excel failed: '+e.toString());}}
+Future<void> coreExcel(BuildContext c,Database db)async{try{final book=Excel.createExcel();for(final t in ['dm_sales','dm_purchases','dm_parties','dm_products','dm_payments','dm_expenses','dm_stock']){final r=await db.query(t);final sh=book[t];if(r.isEmpty){sh.appendRow([TextCellValue('No data')]);continue;}final k=r.first.keys.toList();sh.appendRow(k.map((x)=>TextCellValue(x)).toList());for(final row in r)sh.appendRow(k.map((x)=>excelCell(row[x])).toList());}final bytes=book.save();if(bytes==null)throw Exception('Workbook failed');final f=File(p.join((await coreFolder()).path,'DokanMate_'+DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())+'.xlsx'));await f.writeAsBytes(bytes,flush:true);await coreShare(f.path,'DokanMate Excel export');msg(c,'Excel exported successfully.');}catch(e){msg(c,'Excel failed: '+e.toString());}}
 CellValue excelCell(Object? v){if(v==null)return TextCellValue('');if(v is int)return IntCellValue(v);if(v is num)return DoubleCellValue(v.toDouble());return TextCellValue(v.toString());}
-Future<void> coreCsv(BuildContext c,Database db)async{try{final b=StringBuffer();for(final t in ['dm_sales','dm_purchases','dm_parties','dm_products','dm_payments','dm_expenses','dm_stock']){final r=await db.query(t);b.writeln(t.toUpperCase());if(r.isEmpty){b.writeln('No data');continue;}final k=r.first.keys.toList();b.writeln(k.join(','));for(final row in r)b.writeln(k.map((x)=>'"'+(row[x]??'').toString().replaceAll('"','""')+'"').join(','));b.writeln();}final f=File(join((await coreFolder()).path,'DokanMate_'+DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())+'.csv'));await f.writeAsString(b.toString(),flush:true);await coreShare(f.path,'DokanMate CSV export');msg(c,'CSV exported successfully.');}catch(e){msg(c,'CSV failed: '+e.toString());}}
-Future<void> corePdf(BuildContext c,Database db)async{try{final s=(await db.rawQuery('SELECT COALESCE(SUM(total),0) sales,COALESCE(SUM(paid),0) paid,COALESCE(SUM(due),0) due FROM dm_sales')).first;final p=(await db.rawQuery('SELECT COALESCE(SUM(total),0) purchase,COALESCE(SUM(due),0) payable FROM dm_purchases')).first;final e=(await db.rawQuery('SELECT COALESCE(SUM(amount),0) expense FROM dm_expenses')).first;final result=(s['sales'] as num).toDouble()-(p['purchase'] as num).toDouble()-(e['expense'] as num).toDouble();final doc=pw.Document();doc.addPage(pw.MultiPage(pageFormat:PdfPageFormat.a4,build:(_)=>[pw.Text('DokanMate Business Report',style:pw.TextStyle(fontSize:24,fontWeight:pw.FontWeight.bold)),pw.Text(DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.now())),pw.SizedBox(height:18),pw.TableHelper.fromTextArray(headers:['Metric','Amount'],data:[['Sales',money(s['sales'] as num)],['Collection',money(s['paid'] as num)],['Receivable',money(s['due'] as num)],['Purchase',money(p['purchase'] as num)],['Payable',money(p['payable'] as num)],['Expenses',money(e['expense'] as num)],['Net result',money(result)]])),pw.SizedBox(height:20),pw.Text('DokanMate offline business manager') ]));final f=File(join((await coreFolder()).path,'DokanMate_Report_'+DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())+'.pdf'));await f.writeAsBytes(await doc.save(),flush:true);await coreShare(f.path,'DokanMate PDF report');msg(c,'PDF created successfully.');}catch(e){msg(c,'PDF failed: '+e.toString());}}
-
-
-Future<void> coreBusiness(BuildContext c,Database db)async{
- final b=(await db.query('dm_business',where:'id=1')).first;final n=TextEditingController(text:b['name'].toString()),o=TextEditingController(text:b['owner'].toString()),p=TextEditingController(text:b['phone'].toString()),a=TextEditingController(text:b['address'].toString()),s=TextEditingController(text:b['state'].toString()),g=TextEditingController(text:b['gstin'].toString()),u=TextEditingController(text:b['upi'].toString());
- await showDialog(context:c,builder:(d)=>AlertDialog(title:const Text('Business Profile',style:TextStyle(fontWeight:FontWeight.w900)),content:SingleChildScrollView(child:Column(children:[TextField(controller:n,decoration:const InputDecoration(labelText:'Business name')),TextField(controller:o,decoration:const InputDecoration(labelText:'Owner')),TextField(controller:p,decoration:const InputDecoration(labelText:'Phone')),TextField(controller:a,decoration:const InputDecoration(labelText:'Address')),TextField(controller:s,decoration:const InputDecoration(labelText:'State')),TextField(controller:g,decoration:const InputDecoration(labelText:'GSTIN')),TextField(controller:u,decoration:const InputDecoration(labelText:'UPI ID')])),actions:[TextButton(onPressed:()=>Navigator.pop(d),child:const Text('Cancel')),FilledButton(onPressed:()async{await db.update('dm_business',{'name':n.text,'owner':o.text,'phone':p.text,'address':a.text,'state':s.text,'gstin':g.text,'upi':u.text},where:'id=1');if(d.mounted)Navigator.pop(d);},child:const Text('Save'))]));
+Future<void> coreCsv(BuildContext c,Database db)async{try{final b=StringBuffer();for(final t in ['dm_sales','dm_purchases','dm_parties','dm_products','dm_payments','dm_expenses','dm_stock']){final r=await db.query(t);b.writeln(t.toUpperCase());if(r.isEmpty){b.writeln('No data');continue;}final k=r.first.keys.toList();b.writeln(k.p.join(','));for(final row in r)b.writeln(k.map((x)=>'"'+(row[x]??'').toString().replaceAll('"','""')+'"').p.join(','));b.writeln();}final f=File(p.join((await coreFolder()).path,'DokanMate_'+DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())+'.csv'));await f.writeAsString(b.toString(),flush:true);await coreShare(f.path,'DokanMate CSV export');msg(c,'CSV exported successfully.');}catch(e){msg(c,'CSV failed: '+e.toString());}}
+Future<void> corePdf(BuildContext c,Database db)async{
+  try{
+    final s=(await db.rawQuery('SELECT COALESCE(SUM(total),0) sales,COALESCE(SUM(paid),0) paid,COALESCE(SUM(due),0) due FROM dm_sales')).first;
+    final pch=(await db.rawQuery('SELECT COALESCE(SUM(total),0) purchase,COALESCE(SUM(due),0) payable FROM dm_purchases')).first;
+    final e=(await db.rawQuery('SELECT COALESCE(SUM(amount),0) expense FROM dm_expenses')).first;
+    final result=(s['sales'] as num).toDouble()-(pch['purchase'] as num).toDouble()-(e['expense'] as num).toDouble();
+    final doc=pw.Document();
+    doc.addPage(pw.MultiPage(pageFormat:PdfPageFormat.a4,build:(_){
+      return [
+        pw.Text('DokanMate Business Report',style:pw.TextStyle(fontSize:24,fontWeight:pw.FontWeight.bold)),
+        pw.Text(DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.now())),
+        pw.SizedBox(height:18),
+        pw.TableHelper.fromTextArray(
+          headers:['Metric','Amount'],
+          data:[
+            ['Sales',money(s['sales'] as num)],
+            ['Collection',money(s['paid'] as num)],
+            ['Receivable',money(s['due'] as num)],
+            ['Purchase',money(pch['purchase'] as num)],
+            ['Payable',money(pch['payable'] as num)],
+            ['Expenses',money(e['expense'] as num)],
+            ['Net result',money(result)]
+          ]
+        ),
+        pw.SizedBox(height:20),
+        pw.Text('DokanMate offline business manager')
+      ];
+    }));
+    final f=File(p.join((await coreFolder()).path,'DokanMate_Report_'+DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())+'.pdf'));
+    await f.writeAsBytes(await doc.save(),flush:true);
+    await coreShare(f.path,'DokanMate PDF report');
+    msg(c,'PDF created successfully.');
+  }catch(e){msg(c,'PDF failed: '+e.toString());}
 }
 
 Future<void> coreInvoicePdf(BuildContext c,Database db,int id,bool purchase)async{
@@ -833,7 +860,7 @@ Future<void> coreInvoicePdf(BuildContext c,Database db,int id,bool purchase)asyn
    pw.SizedBox(height:14),pw.TableHelper.fromTextArray(headers:['Item','Qty','Unit','Rate','GST','Amount'],data:items.map((i)=>[i['name'],i['qty'].toString(),i['unit'],money(i['rate'] as num),i['gst'].toString()+'%',money(i['amount'] as num)]).toList()),
    pw.SizedBox(height:14),pw.Align(alignment:pw.Alignment.centerRight,child:pw.Column(crossAxisAlignment:pw.CrossAxisAlignment.end,children:[pw.Text('Subtotal: '+money(x['subtotal'] as num)),pw.Text('Discount: '+money(x['discount'] as num)),pw.Text('GST: '+money(((x['cgst'] as num)+(x['sgst'] as num)+(x['igst'] as num)))),pw.Text('Grand Total: '+money(x['total'] as num),style:pw.TextStyle(fontSize:16,fontWeight:pw.FontWeight.bold)),pw.Text('Paid: '+money(x['paid'] as num)),pw.Text('Due: '+money(x['due'] as num))])),pw.SizedBox(height:28),pw.Text('Thank you.')
   ])));
-  final f=File(join((await coreFolder()).path,x['invoice'].toString()+'.pdf'));await f.writeAsBytes(await doc.save(),flush:true);await coreShare(f.path,'DokanMate invoice');
+  final f=File(p.join((await coreFolder()).path,x['invoice'].toString()+'.pdf'));await f.writeAsBytes(await doc.save(),flush:true);await coreShare(f.path,'DokanMate invoice');
  }catch(e){msg(c,'Invoice PDF failed: '+e.toString());}
 }
 
@@ -847,3 +874,6 @@ Widget reportCard(String a,String b,IconData i,VoidCallback f)=>Card(child:ListT
 String now()=>DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
 String ddate(Object? v){if(v==null)return '';try{return DateFormat('dd MMM yyyy').format(DateTime.parse(v.toString()));}catch(_){return v.toString();}}
 Future<void> msg(BuildContext c,String x)=>showDialog(context:c,builder:(_)=>AlertDialog(title:const Text('DokanMate'),content:Text(x),actions:[TextButton(onPressed:()=>Navigator.pop(c),child:const Text('OK'))]));
+
+Widget quick(BuildContext c,String a,IconData i,VoidCallback f)=>SizedBox(width:105,child:InkWell(onTap:f,borderRadius:BorderRadius.circular(17),child:Container(padding:const EdgeInsets.all(12),decoration:BoxDecoration(color:Colors.white,borderRadius:BorderRadius.circular(17)),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Icon(i,color:const Color(0xFF5B5CE2)),const SizedBox(height:7),Text(a,style:const TextStyle(fontWeight:FontWeight.w700,fontSize:11))]))));
+Widget stat(String a,String b,IconData i)=>Container(padding:const EdgeInsets.all(14),decoration:BoxDecoration(color:Colors.white,borderRadius:BorderRadius.circular(19)),child:Column(crossAxisAlignment:CrossAxisAlignment.start,mainAxisAlignment:MainAxisAlignment.spaceBetween,children:[Icon(i,color:const Color(0xFF5B5CE2),size:21),Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(a,style:const TextStyle(fontSize:11,color:Color(0xFF777B86))),Text(b,style:const TextStyle(fontSize:15,fontWeight:FontWeight.w900))])]));
