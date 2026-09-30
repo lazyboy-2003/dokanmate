@@ -552,120 +552,213 @@ class _Hero extends StatelessWidget {
   }
 }
 
-class SalesPage extends StatelessWidget {
+
+Future<void> deleteTransaction(BuildContext context, Database db, int id, bool purchase, VoidCallback refresh) async {
+  final table = purchase ? 'purchases' : 'sales';
+  final itemTable = purchase ? 'purchase_items' : 'sale_items';
+  final key = purchase ? 'purchase_id' : 'sale_id';
+  final rows = await db.query(table, where: 'id=?', whereArgs: [id]);
+  if (rows.isEmpty) return;
+  final x = rows.first;
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Delete transaction?'),
+      content: Text('Delete ' + x['invoice'].toString() + ' permanently? Stock, due and payment records will be reversed.'),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+        FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete')),
+      ],
+    ),
+  );
+  if (ok != true) return;
+  await db.transaction((tx) async {
+    final partyId = (x['party_id'] as num?)?.toInt();
+    final due = ((x['due'] as num?) ?? 0).toDouble();
+    if (partyId != null && due > 0) await tx.rawUpdate('UPDATE parties SET balance=balance-? WHERE id=?', [due, partyId]);
+    await tx.delete('payments', where: 'reference=?', whereArgs: [x['invoice']]);
+    final items = await tx.query(itemTable, where: key + '=?', whereArgs: [id]);
+    for (final item in items) {
+      final qty = ((item['qty'] as num?) ?? 0).toDouble();
+      final productId = (item['product_id'] as num?)?.toInt();
+      if (productId != null) await tx.rawUpdate('UPDATE products SET qty=qty+? WHERE id=?', [purchase ? -qty : qty, productId]);
+    }
+    await tx.delete('stock_moves', where: 'reference=?', whereArgs: [x['invoice']]);
+    await tx.delete(itemTable, where: key + '=?', whereArgs: [id]);
+    await tx.delete(table, where: 'id=?', whereArgs: [id]);
+    await tx.insert('audit', {'action': purchase ? 'Delete Purchase' : 'Delete Sale', 'date': today(), 'details': x['invoice'].toString()});
+  });
+  refresh();
+  if (context.mounted) showMsg(context, 'Transaction deleted successfully.');
+}
+
+class TransactionPage extends StatefulWidget {
   final Database db;
+  final bool purchase;
   final VoidCallback refresh;
-  const SalesPage(this.db, this.refresh, {super.key});
+  const TransactionPage(this.db, this.purchase, this.refresh, {super.key});
+  @override
+  State<TransactionPage> createState() => _TransactionPageState();
+}
+
+class _TransactionPageState extends State<TransactionPage> {
+  String period = 'All';
+  String search = '';
+  DateTime? fromDate;
+  DateTime? toDate;
+
+  Future<List<Map<String, Object?>>> loadRows() async {
+    final table = widget.purchase ? 'purchases' : 'sales';
+    final args = <Object?>[];
+    final where = <String>[];
+    DateTime? start;
+    DateTime? end;
+    final now = DateTime.now();
+    if (period == 'Today') {
+      start = DateTime(now.year, now.month, now.day);
+      end = start.add(const Duration(days: 1));
+    } else if (period == 'Yesterday') {
+      end = DateTime(now.year, now.month, now.day);
+      start = end.subtract(const Duration(days: 1));
+    } else if (period == 'This Week') {
+      start = DateTime(now.year, now.month, now.day).subtract(Duration(days: now.weekday - 1));
+      end = start.add(const Duration(days: 7));
+    } else if (period == 'This Month') {
+      start = DateTime(now.year, now.month, 1);
+      end = DateTime(now.year, now.month + 1, 1);
+    } else if (period == 'Custom' && fromDate != null && toDate != null) {
+      start = DateTime(fromDate!.year, fromDate!.month, fromDate!.day);
+      end = DateTime(toDate!.year, toDate!.month, toDate!.day).add(const Duration(days: 1));
+    }
+    if (start != null && end != null) {
+      where.add('s.date >= ? AND s.date < ?');
+      args.add(DateFormat('yyyy-MM-dd HH:mm:ss').format(start));
+      args.add(DateFormat('yyyy-MM-dd HH:mm:ss').format(end));
+    }
+    if (search.trim().isNotEmpty) {
+      where.add("(s.invoice LIKE ? OR COALESCE(p.name,'') LIKE ?)");
+      final q = '%' + search.trim() + '%';
+      args.add(q);
+      args.add(q);
+    }
+    final sql = 'SELECT s.*, p.name party FROM ' + table + ' s LEFT JOIN parties p ON p.id=s.party_id' +
+        (where.isEmpty ? '' : ' WHERE ' + where.join(' AND ')) + ' ORDER BY s.date DESC, s.id DESC';
+    return widget.db.rawQuery(sql, args);
+  }
+
+  Future<void> customFilter() async {
+    final a = await showDatePicker(context: context, initialDate: fromDate ?? DateTime.now(), firstDate: DateTime(2020), lastDate: DateTime(2100));
+    if (a == null || !mounted) return;
+    final b = await showDatePicker(context: context, initialDate: toDate ?? a, firstDate: a, lastDate: DateTime(2100));
+    if (b == null) return;
+    setState(() { fromDate = a; toDate = b; period = 'Custom'; });
+  }
 
   @override
   Widget build(BuildContext context) {
+    final title = widget.purchase ? 'Purchase' : 'Sales';
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Sales', style: TextStyle(fontWeight: FontWeight.w900)),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
         actions: [
-          IconButton(
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => InvoicePage(db, false, refresh))),
-            icon: const Icon(Icons.add_circle_rounded),
-          )
+          IconButton(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => InvoicePage(widget.db, widget.purchase, widget.refresh))), icon: const Icon(Icons.add_circle_rounded)),
         ],
       ),
-      body: FutureBuilder<List<Map<String, Object?>>>(
-        future: db.rawQuery('SELECT s.*, p.name party FROM sales s LEFT JOIN parties p ON p.id=s.party_id ORDER BY s.id DESC'),
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-          final rows = snapshot.data!;
-          if (rows.isEmpty) {
-            return Padding(padding: const EdgeInsets.all(18), child: emptyState('No sales yet', 'Create an item-based sales invoice.'));
-          }
-          return ListView(
-            padding: const EdgeInsets.all(18),
-            children: rows.map((x) {
-              return Card(
-                child: ListTile(
-                  onTap: () => invoicePdf(context, db, (x['id'] as num).toInt(), false),
-                  leading: Container(
-                    width: 46,
-                    height: 46,
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(colors: [Color(0xFF6C63FF), Color(0xFF8F85FF)]),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: const Icon(Icons.receipt_long_rounded, color: Colors.white),
-                  ),
-                  title: Text(x['invoice'].toString(), style: const TextStyle(fontWeight: FontWeight.w800)),
-                  subtitle: Text((x['party'] ?? 'Walk-in').toString() + ' • ' + prettyDate(x['date'])),
-                  trailing: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(money(x['total'] as num), style: const TextStyle(fontWeight: FontWeight.w900)),
-                      Text(
-                        (x['due'] as num) > 0 ? 'Due ' + money(x['due'] as num) : 'Paid',
-                        style: TextStyle(fontSize: 10, color: (x['due'] as num) > 0 ? Colors.red : Colors.green),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 5),
+            child: TextField(
+              decoration: InputDecoration(
+                hintText: 'Search invoice or ' + (widget.purchase ? 'supplier' : 'customer'),
+                prefixIcon: const Icon(Icons.search_rounded),
+                suffixIcon: search.isEmpty ? null : IconButton(onPressed: () => setState(() => search = ''), icon: const Icon(Icons.clear)),
+              ),
+              onChanged: (v) => setState(() => search = v),
+            ),
+          ),
+          SizedBox(
+            height: 50,
+            child: ListView(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
+              scrollDirection: Axis.horizontal,
+              children: [
+                ...['All','Today','Yesterday','This Week','This Month'].map((x) => Padding(
+                  padding: const EdgeInsets.only(right: 7),
+                  child: ChoiceChip(label: Text(x), selected: period == x, onSelected: (_) => setState(() => period = x)),
+                )),
+                Padding(padding: const EdgeInsets.only(right: 7), child: ChoiceChip(label: const Text('Custom'), selected: period == 'Custom', onSelected: (_) => customFilter())),
+              ],
+            ),
+          ),
+          if (period == 'Custom' && fromDate != null && toDate != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 2),
+              child: Align(alignment: Alignment.centerLeft, child: Text(
+                DateFormat('dd MMM yyyy').format(fromDate!) + ' - ' + DateFormat('dd MMM yyyy').format(toDate!),
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+              )),
+            ),
+          Expanded(
+            child: FutureBuilder<List<Map<String, Object?>>>(
+              future: loadRows(),
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+                final rows = snapshot.data!;
+                if (rows.isEmpty) return Padding(padding: const EdgeInsets.all(18), child: emptyState('No transactions found', 'Try another date filter or search.'));
+                return ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 25),
+                  children: rows.map((x) {
+                    final id = (x['id'] as num).toInt();
+                    return Card(
+                      child: ListTile(
+                        onTap: () => invoicePdf(context, widget.db, id, widget.purchase),
+                        leading: CircleAvatar(
+                          backgroundColor: widget.purchase ? const Color(0xFFE7F9F2) : const Color(0xFFEEF0FF),
+                          child: Icon(widget.purchase ? Icons.shopping_bag_rounded : Icons.receipt_long_rounded, color: widget.purchase ? const Color(0xFF13B981) : const Color(0xFF5B5CE2)),
+                        ),
+                        title: Text(x['invoice'].toString(), style: const TextStyle(fontWeight: FontWeight.w800)),
+                        subtitle: Text((x['party'] ?? (widget.purchase ? 'Supplier' : 'Walk-in')).toString() + ' • ' + prettyDate(x['date'])),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(money(x['total'] as num), style: const TextStyle(fontWeight: FontWeight.w900)),
+                            PopupMenuButton<String>(
+                              onSelected: (v) async {
+                                if (v == 'edit') {
+                                  await Navigator.push(context, MaterialPageRoute(builder: (_) => InvoicePage(widget.db, widget.purchase, widget.refresh, editId: id)));
+                                  if (mounted) setState(() {});
+                                } else {
+                                  await deleteTransaction(context, widget.db, id, widget.purchase, widget.refresh);
+                                  if (mounted) setState(() {});
+                                }
+                              },
+                              itemBuilder: (_) => const [
+                                PopupMenuItem(value: 'edit', child: Text('Edit')),
+                                PopupMenuItem(value: 'delete', child: Text('Delete')),
+                              ],
+                            ),
+                          ],
+                        ),
                       ),
-                    ],
-                  ),
-                ),
-              );
-            }).toList(),
-          );
-        },
+                    );
+                  }).toList(),
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-class PurchasePage extends StatelessWidget {
-  final Database db;
-  final VoidCallback refresh;
-  const PurchasePage(this.db, this.refresh, {super.key});
+class SalesPage extends TransactionPage {
+  const SalesPage(Database db, VoidCallback refresh, {super.key}) : super(db, false, refresh);
+}
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Purchase', style: TextStyle(fontWeight: FontWeight.w900)),
-        actions: [
-          IconButton(
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => InvoicePage(db, true, refresh))),
-            icon: const Icon(Icons.add_circle_rounded),
-          )
-        ],
-      ),
-      body: FutureBuilder<List<Map<String, Object?>>>(
-        future: db.rawQuery('SELECT s.*, p.name party FROM purchases s LEFT JOIN parties p ON p.id=s.party_id ORDER BY s.id DESC'),
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-          final rows = snapshot.data!;
-          if (rows.isEmpty) {
-            return Padding(padding: const EdgeInsets.all(18), child: emptyState('No purchases yet', 'Create purchase invoices and stock will update automatically.'));
-          }
-          return ListView(
-            padding: const EdgeInsets.all(18),
-            children: rows.map((x) {
-              return Card(
-                child: ListTile(
-                  onTap: () => invoicePdf(context, db, (x['id'] as num).toInt(), true),
-                  leading: Container(
-                    width: 46,
-                    height: 46,
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(colors: [Color(0xFF13B981), Color(0xFF58D7AE)]),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: const Icon(Icons.shopping_bag_rounded, color: Colors.white),
-                  ),
-                  title: Text(x['invoice'].toString(), style: const TextStyle(fontWeight: FontWeight.w800)),
-                  subtitle: Text((x['party'] ?? 'Supplier').toString() + ' • ' + prettyDate(x['date'])),
-                  trailing: Text(money(x['total'] as num), style: const TextStyle(fontWeight: FontWeight.w900)),
-                ),
-              );
-            }).toList(),
-          );
-        },
-      ),
-    );
-  }
+class PurchasePage extends TransactionPage {
+  const PurchasePage(Database db, VoidCallback refresh, {super.key}) : super(db, true, refresh);
 }
 
 class InvoiceLine {
