@@ -21,6 +21,7 @@ Future<void> main() async {
       await db.execute('CREATE TABLE products(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, qty REAL, buy REAL, sell REAL)');
     },
   );
+  await coreSchema(db);
   runApp(App(db));
 }
 
@@ -643,3 +644,175 @@ class _ExportCard extends StatelessWidget {
     ),
   );
 }
+
+
+Future<void> coreSchema(Database db) async {
+  final q = [
+    'CREATE TABLE IF NOT EXISTS dm_business(id INTEGER PRIMARY KEY, name TEXT, owner TEXT, phone TEXT, address TEXT, state TEXT, gstin TEXT, upi TEXT, invoice_prefix TEXT)',
+    'CREATE TABLE IF NOT EXISTS dm_parties(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, phone TEXT, address TEXT, state TEXT, gstin TEXT, type TEXT, balance REAL DEFAULT 0, credit_limit REAL DEFAULT 0, credit_days INTEGER DEFAULT 0)',
+    'CREATE TABLE IF NOT EXISTS dm_products(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, sku TEXT, barcode TEXT, category TEXT, hsn TEXT, unit TEXT, gst REAL DEFAULT 0, buy REAL DEFAULT 0, sell REAL DEFAULT 0, wholesale REAL DEFAULT 0, qty REAL DEFAULT 0, min_qty REAL DEFAULT 0)',
+    'CREATE TABLE IF NOT EXISTS dm_sales(id INTEGER PRIMARY KEY AUTOINCREMENT, invoice TEXT, date TEXT, party_id INTEGER, subtotal REAL, discount REAL, taxable REAL, cgst REAL, sgst REAL, igst REAL, total REAL, paid REAL, due REAL, mode TEXT)',
+    'CREATE TABLE IF NOT EXISTS dm_sale_items(id INTEGER PRIMARY KEY AUTOINCREMENT, sale_id INTEGER, product_id INTEGER, name TEXT, qty REAL, unit TEXT, rate REAL, discount REAL, gst REAL, amount REAL)',
+    'CREATE TABLE IF NOT EXISTS dm_purchases(id INTEGER PRIMARY KEY AUTOINCREMENT, invoice TEXT, date TEXT, party_id INTEGER, subtotal REAL, discount REAL, taxable REAL, cgst REAL, sgst REAL, igst REAL, total REAL, paid REAL, due REAL, mode TEXT)',
+    'CREATE TABLE IF NOT EXISTS dm_purchase_items(id INTEGER PRIMARY KEY AUTOINCREMENT, purchase_id INTEGER, product_id INTEGER, name TEXT, qty REAL, unit TEXT, rate REAL, discount REAL, gst REAL, amount REAL)',
+    'CREATE TABLE IF NOT EXISTS dm_payments(id INTEGER PRIMARY KEY AUTOINCREMENT, party_id INTEGER, type TEXT, amount REAL, date TEXT, mode TEXT, reference TEXT)',
+    'CREATE TABLE IF NOT EXISTS dm_expenses(id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT, amount REAL, date TEXT, mode TEXT, note TEXT)',
+    'CREATE TABLE IF NOT EXISTS dm_stock(id INTEGER PRIMARY KEY AUTOINCREMENT, product_id INTEGER, type TEXT, qty REAL, date TEXT, reference TEXT)'
+  ];
+  for (final x in q) { try { await db.execute(x); } catch (_) {} }
+  if ((await db.query('dm_business')).isEmpty) {
+    await db.insert('dm_business', {'id':1,'name':'My Business','owner':'','phone':'','address':'','state':'West Bengal','gstin':'','upi':'','invoice_prefix':'INV'});
+  }
+}
+
+class CoreDashboard extends StatelessWidget {
+  final Database db;
+  const CoreDashboard(this.db,{super.key});
+  Future<List<double>> get data async {
+    final s=(await db.rawQuery('SELECT COALESCE(SUM(total),0) a,COALESCE(SUM(paid),0) b,COALESCE(SUM(due),0) c FROM dm_sales')).first;
+    final p=(await db.rawQuery('SELECT COALESCE(SUM(total),0) a,COALESCE(SUM(due),0) b FROM dm_purchases')).first;
+    final e=(await db.rawQuery('SELECT COALESCE(SUM(amount),0) a FROM dm_expenses')).first;
+    final st=(await db.rawQuery('SELECT COALESCE(SUM(qty*buy),0) a FROM dm_products')).first;
+    return [(s['a'] as num).toDouble(),(s['b'] as num).toDouble(),(s['c'] as num).toDouble(),(p['a'] as num).toDouble(),(p['b'] as num).toDouble(),(e['a'] as num).toDouble(),(st['a'] as num).toDouble()];
+  }
+  @override Widget build(BuildContext c)=>FutureBuilder(future:data,builder:(c,s){
+    if(!s.hasData)return const Center(child:CircularProgressIndicator());
+    final x=s.data!,profit=x[0]-x[3]-x[5];
+    return ListView(padding:const EdgeInsets.only(bottom:25),children:[
+      titleBar('DokanMate','Complete business management',actions:[IconButton(onPressed:()=>coreBusiness(c,db),icon:const Icon(Icons.storefront_rounded))]),
+      Padding(padding:const EdgeInsets.symmetric(horizontal:18),child:Container(padding:const EdgeInsets.all(20),decoration:BoxDecoration(gradient:const LinearGradient(colors:[Color(0xFF25274E),Color(0xFF635BDB)]),borderRadius:BorderRadius.circular(26)),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+        const Text('BUSINESS OVERVIEW',style:TextStyle(color:Color(0xFFC8C9FF),fontSize:10,fontWeight:FontWeight.w800,letterSpacing:1.2)),
+        const SizedBox(height:8),Text(money(x[0]),style:const TextStyle(color:Colors.white,fontSize:32,fontWeight:FontWeight.w900)),const Text('Total sales',style:TextStyle(color:Color(0xFFD9DBEE))),
+        const SizedBox(height:16),Row(children:[coreHero('Collection',money(x[1])),const SizedBox(width:8),coreHero('Net result',money(profit))])
+      ]))),
+      Padding(padding:const EdgeInsets.fromLTRB(18,20,18,10),child:const Text('Quick actions',style:TextStyle(fontSize:18,fontWeight:FontWeight.w900))),
+      Padding(padding:const EdgeInsets.symmetric(horizontal:18),child:Wrap(spacing:9,runSpacing:9,children:[
+        quick(c,'New Sale',Icons.add_shopping_cart_rounded,()=>Navigator.push(c,MaterialPageRoute(builder:(_)=>CoreInvoice(db,false,()=>setState((){}))))),
+        quick(c,'Purchase',Icons.shopping_bag_rounded,()=>Navigator.push(c,MaterialPageRoute(builder:(_)=>CoreInvoice(db,true,()=>setState((){}))))),
+        quick(c,'Payment In',Icons.call_received_rounded,()=>corePayment(c,db,'IN')),
+        quick(c,'Payment Out',Icons.call_made_rounded,()=>corePayment(c,db,'OUT')),
+        quick(c,'Expense',Icons.account_balance_wallet_rounded,()=>coreExpense(c,db)),
+        quick(c,'Product',Icons.inventory_2_rounded,()=>coreProduct(c,db))
+      ])),
+      Padding(padding:const EdgeInsets.fromLTRB(18,20,18,10),child:const Text('Business snapshot',style:TextStyle(fontSize:18,fontWeight:FontWeight.w900))),
+      Padding(padding:const EdgeInsets.symmetric(horizontal:18),child:GridView.count(crossAxisCount:2,shrinkWrap:true,physics:const NeverScrollableScrollPhysics(),crossAxisSpacing:10,mainAxisSpacing:10,childAspectRatio:1.5,children:[
+        stat('Receivable',money(x[2]),Icons.account_balance_wallet_rounded),stat('Payable',money(x[4]),Icons.request_quote_rounded),stat('Stock value',money(x[6]),Icons.inventory_2_rounded),stat('Expenses',money(x[5]),Icons.money_off_rounded)
+      ]))
+    ]);
+  });
+}
+Widget coreHero(String a,String b)=>Expanded(child:Container(padding:const EdgeInsets.all(10),decoration:BoxDecoration(color:Colors.white.withOpacity(.1),borderRadius:BorderRadius.circular(14)),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text(a,style:const TextStyle(color:Color(0xFFD2D4E8),fontSize:10)),Text(b,maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(color:Colors.white,fontWeight:FontWeight.w800,fontSize:12))])));
+
+class CoreSales extends StatelessWidget {
+  final Database db;final VoidCallback refresh;
+  const CoreSales(this.db,this.refresh,{super.key});
+  @override Widget build(BuildContext c)=>Scaffold(appBar:AppBar(title:const Text('Sales',style:TextStyle(fontWeight:FontWeight.w900)),actions:[IconButton(onPressed:()=>Navigator.push(c,MaterialPageRoute(builder:(_)=>CoreInvoice(db,false,refresh))),icon:const Icon(Icons.add_circle_rounded))]),body:FutureBuilder(future:db.rawQuery('SELECT s.*,p.name party FROM dm_sales s LEFT JOIN dm_parties p ON p.id=s.party_id ORDER BY s.id DESC'),builder:(c,s){
+    if(!s.hasData)return const Center(child:CircularProgressIndicator());final r=s.data!;
+    return ListView(padding:const EdgeInsets.all(18),children:[if(r.isEmpty)emptyBox('No sales yet','Create a proper item-based sales invoice.'),...r.map((x)=>Card(child:ListTile(onTap:()=>coreInvoicePdf(c,db,(x['id'] as num).toInt(),false),leading:const CircleAvatar(backgroundColor:Color(0xFFEEF0FF),child:Icon(Icons.receipt_long_rounded,color:Color(0xFF5B5CE2))),title:Text(x['invoice'].toString(),style:const TextStyle(fontWeight:FontWeight.w800)),subtitle:Text((x['party']??'Walk-in').toString()+' • '+ddate(x['date'])),trailing:Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.end,children:[Text(money(x['total'] as num),style:const TextStyle(fontWeight:FontWeight.w900)),Text((x['due'] as num)>0?'Due '+money(x['due'] as num):'Paid',style:TextStyle(fontSize:10,color:(x['due'] as num)>0?Colors.red:Colors.green))]))))]);
+  });
+}
+
+class CorePurchase extends StatelessWidget {
+  final Database db;final VoidCallback refresh;
+  const CorePurchase(this.db,this.refresh,{super.key});
+  @override Widget build(BuildContext c)=>Scaffold(appBar:AppBar(title:const Text('Purchase',style:TextStyle(fontWeight:FontWeight.w900)),actions:[IconButton(onPressed:()=>Navigator.push(c,MaterialPageRoute(builder:(_)=>CoreInvoice(db,true,refresh))),icon:const Icon(Icons.add_circle_rounded))]),body:FutureBuilder(future:db.rawQuery('SELECT s.*,p.name party FROM dm_purchases s LEFT JOIN dm_parties p ON p.id=s.party_id ORDER BY s.id DESC'),builder:(c,s){
+    if(!s.hasData)return const Center(child:CircularProgressIndicator());final r=s.data!;
+    return ListView(padding:const EdgeInsets.all(18),children:[if(r.isEmpty)emptyBox('No purchases yet','Create purchase invoices; stock updates automatically.'),...r.map((x)=>Card(child:ListTile(onTap:()=>coreInvoicePdf(c,db,(x['id'] as num).toInt(),true),leading:const CircleAvatar(backgroundColor:Color(0xFFEAF8F2),child:Icon(Icons.shopping_bag_rounded,color:Color(0xFF15936C))),title:Text(x['invoice'].toString(),style:const TextStyle(fontWeight:FontWeight.w800)),subtitle:Text((x['party']??'Supplier').toString()+' • '+ddate(x['date'])),trailing:Text(money(x['total'] as num),style:const TextStyle(fontWeight:FontWeight.w900))))]);
+  });
+}
+
+class CoreInvoice extends StatefulWidget {
+  final Database db;final bool purchase;final VoidCallback refresh;
+  const CoreInvoice(this.db,this.purchase,this.refresh,{super.key});
+  @override State<CoreInvoice> createState()=>_CoreInvoiceState();
+}
+class CoreLine {
+  int id;String name,unit;double qty,rate,gst,discount;
+  CoreLine(this.id,this.name,this.unit,this.qty,this.rate,this.gst,this.discount);
+  double get base=>qty*rate-discount;double get tax=>base*gst/100;double get total=>base+tax;
+}
+class _CoreInvoiceState extends State<CoreInvoice>{
+  List<Map<String,dynamic>> parties=[],products=[];List<CoreLine> lines=[];int? party;String mode='Cash';final paid=TextEditingController();
+  double get subtotal=>lines.fold(0,(a,x)=>a+x.qty*x.rate);double get discount=>lines.fold(0,(a,x)=>a+x.discount);double get taxable=>lines.fold(0,(a,x)=>a+x.base);double get gst=>lines.fold(0,(a,x)=>a+x.tax);double get total=>taxable+gst;double get paidValue=>double.tryParse(paid.text)??0;
+  @override void initState(){super.initState();load();}
+  Future<void> load()async{final a=await widget.db.query('dm_parties',where:'type=?',whereArgs:[widget.purchase?'supplier':'customer'],orderBy:'name');final b=await widget.db.query('dm_products',orderBy:'name');if(mounted)setState((){parties=a;products=b;});}
+  @override Widget build(BuildContext c)=>Scaffold(appBar:AppBar(title:Text(widget.purchase?'New Purchase Invoice':'New Sales Invoice',style:const TextStyle(fontWeight:FontWeight.w900))),body:ListView(padding:const EdgeInsets.fromLTRB(18,5,18,30),children:[
+    label(widget.purchase?'SUPPLIER / CREDITOR':'CUSTOMER'),
+    DropdownButtonFormField<int?>(value:party,isExpanded:true,decoration:InputDecoration(labelText:widget.purchase?'Select supplier':'Select customer'),items:[const DropdownMenuItem<int?>(value:null,child:Text('Walk-in / Cash')), ...parties.map((p)=>DropdownMenuItem(value:p['id'] as int,child:Text(p['name'].toString())))],onChanged:(v)=>setState(()=>party=v)),
+    const SizedBox(height:18),label('ITEMS'),
+    FilledButton.tonalIcon(onPressed:products.isEmpty?()=>coreProduct(c,widget.db):pick,icon:const Icon(Icons.add),label:Text(products.isEmpty?'Add Product First':'Add Product')),
+    const SizedBox(height:8),if(lines.isEmpty)emptyBox('No items','Add product, quantity, rate, discount and GST.'),...lines.asMap().entries.map((e)=>line(e.key,e.value)),
+    const SizedBox(height:12),label('PAYMENT'),
+    TextField(controller:paid,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Paid amount'),onChanged:(_)=>setState((){})),
+    const SizedBox(height:8),DropdownButtonFormField<String>(value:mode,decoration:const InputDecoration(labelText:'Payment mode'),items:['Cash','UPI','Bank','Card','Cheque','Credit'].map((x)=>DropdownMenuItem(value:x,child:Text(x))).toList(),onChanged:(v)=>setState(()=>mode=v!)),
+    const SizedBox(height:12),Container(padding:const EdgeInsets.all(18),decoration:BoxDecoration(color:Colors.white,borderRadius:BorderRadius.circular(20)),child:Column(children:[sumrow('Subtotal',money(subtotal)),sumrow('Discount',money(discount)),sumrow('Taxable',money(taxable)),sumrow('GST',money(gst)),const Divider(),sumrow('Grand Total',money(total),true),sumrow('Due',money((total-paidValue).clamp(0,double.infinity)),false,Colors.red)])),
+    const SizedBox(height:14),FilledButton.icon(onPressed:save,icon:const Icon(Icons.save_rounded),label:const Text('Save Invoice'),style:FilledButton.styleFrom(minimumSize:const Size.fromHeight(54)))
+  ]);
+  Widget line(int i,CoreLine x)=>Container(margin:const EdgeInsets.only(bottom:8),padding:const EdgeInsets.all(13),decoration:BoxDecoration(color:Colors.white,borderRadius:BorderRadius.circular(18)),child:Column(children:[
+    Row(children:[Expanded(child:Text(x.name,style:const TextStyle(fontWeight:FontWeight.w800))),IconButton(onPressed:()=>setState(()=>lines.removeAt(i)),icon:const Icon(Icons.delete_outline,color:Colors.red))]),
+    Row(children:[Expanded(child:TextField(controller:TextEditingController(text:x.qty.toString()),keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:InputDecoration(labelText:'Qty '+x.unit),onChanged:(v){x.qty=double.tryParse(v)??0;setState((){});})),const SizedBox(width:7),Expanded(child:TextField(controller:TextEditingController(text:x.rate.toString()),keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Rate'),onChanged:(v){x.rate=double.tryParse(v)??0;setState((){});})),const SizedBox(width:7),Expanded(child:TextField(controller:TextEditingController(text:x.discount.toString()),keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Discount'),onChanged:(v){x.discount=double.tryParse(v)??0;setState((){});}))]
+    ),Align(alignment:Alignment.centerRight,child:Text(money(x.total),style:const TextStyle(fontWeight:FontWeight.w900)))
+  ]));
+  Future<void> pick()async{final p=await showModalBottomSheet<Map<String,dynamic>>(context:context,builder:(_)=>ListView(padding:const EdgeInsets.all(18),children:[const Text('Select Product',style:TextStyle(fontSize:22,fontWeight:FontWeight.w900)),...products.map((p)=>ListTile(title:Text(p['name'].toString()),subtitle:Text(p['unit'].toString()+' • GST '+p['gst'].toString()+'% • Stock '+p['qty'].toString()),trailing:Text(money((widget.purchase?p['buy']:p['sell']) as num)),onTap:()=>Navigator.pop(context,p)))]));if(p!=null)setState(()=>lines.add(CoreLine(p['id'] as int,p['name'].toString(),p['unit'].toString(),1,(widget.purchase?p['buy']:p['sell'] as num).toDouble(),(p['gst'] as num).toDouble(),0)));}
+  Future<void> save()async{
+    if(lines.isEmpty){msg(context,'Add at least one product.');return;}if(paidValue<0||paidValue>total){msg(context,'Paid amount cannot exceed total.');return;}
+    final table=widget.purchase?'dm_purchases':'dm_sales';final itemTable=widget.purchase?'dm_purchase_items':'dm_sale_items';final itemKey=widget.purchase?'purchase_id':'sale_id';final n=(Sqflite.firstIntValue(await widget.db.rawQuery('SELECT COUNT(*) FROM '+table))??0)+1;final inv=(widget.purchase?'PUR-':'INV-')+n.toString().padLeft(5,'0');final due=total-paidValue;
+    await widget.db.transaction((tx)async{
+      final id=await tx.insert(table,{'invoice':inv,'date':now(),'party_id':party,'subtotal':subtotal,'discount':discount,'taxable':taxable,'cgst':gst/2,'sgst':gst/2,'igst':0,'total':total,'paid':paidValue,'due':due,'mode':mode});
+      for(final x in lines){
+        await tx.insert(itemTable,{itemKey:id,'product_id':x.id,'name':x.name,'qty':x.qty,'unit':x.unit,'rate':x.rate,'discount':x.discount,'gst':x.gst,'amount':x.total});
+        await tx.rawUpdate('UPDATE dm_products SET qty=qty+? WHERE id=?',[widget.purchase?x.qty:-x.qty,x.id]);
+        await tx.insert('dm_stock',{'product_id':x.id,'type':widget.purchase?'PURCHASE':'SALE','qty':widget.purchase?x.qty:-x.qty,'date':now(),'reference':inv});
+      }
+      if(party!=null&&due>0)await tx.rawUpdate('UPDATE dm_parties SET balance=balance+? WHERE id=?',[due,party]);
+    });
+    if(mounted){widget.refresh();Navigator.pop(context);msg(context,'Invoice '+inv+' saved.');}
+  }
+}
+
+class CoreParties extends StatefulWidget{final Database db;final VoidCallback refresh;const CoreParties(this.db,this.refresh,{super.key});@override State<CoreParties> createState()=>_CorePartiesState();}
+class _CorePartiesState extends State<CoreParties>{bool customer=true;@override Widget build(BuildContext c)=>Scaffold(appBar:AppBar(title:const Text('Parties',style:TextStyle(fontWeight:FontWeight.w900)),actions:[IconButton(onPressed:()=>coreParty(c,widget.db,customer?'customer':'supplier'),icon:const Icon(Icons.person_add_alt_1_rounded))]),body:Column(children:[
+ Padding(padding:const EdgeInsets.all(14),child:SegmentedButton<bool>(segments:const[ButtonSegment(value:true,label:Text('Customers')),ButtonSegment(value:false,label:Text('Suppliers'))],selected:{customer},onSelectionChanged:(x)=>setState(()=>customer=x.first))),
+ Expanded(child:FutureBuilder(future:widget.db.query('dm_parties',where:'type=?',whereArgs:[customer?'customer':'supplier'],orderBy:'name'),builder:(c,s){if(!s.hasData)return const Center(child:CircularProgressIndicator());final r=s.data!;return ListView(padding:const EdgeInsets.symmetric(horizontal:18),children:[if(r.isEmpty)emptyBox(customer?'No customers':'No suppliers',customer?'Add customers to manage receivables.':'Add suppliers to manage payables.'),...r.map((x)=>Card(child:ListTile(leading:CircleAvatar(backgroundColor:const Color(0xFFEEF0FF),child:Icon(customer?Icons.person:Icons.factory,color:const Color(0xFF5B5CE2))),title:Text(x['name'].toString(),style:const TextStyle(fontWeight:FontWeight.w800)),subtitle:Text((x['phone']??'').toString()+' • '+(x['gstin']??'').toString()),trailing:Text(money(x['balance'] as num),style:const TextStyle(fontWeight:FontWeight.w900)))))];}))
+]) );}
+
+class CoreMore extends StatelessWidget{final Database db;final VoidCallback refresh;const CoreMore(this.db,this.refresh,{super.key});@override Widget build(BuildContext c)=>ListView(padding:const EdgeInsets.fromLTRB(18,18,18,30),children:[
+ titleBar('More','Inventory, payments, GST, reports and settings'),
+ menu(c,'Inventory','Products, units, GST, stock and low-stock alerts',Icons.inventory_2_rounded,()=>Navigator.push(c,MaterialPageRoute(builder:(_)=>CoreInventory(db,refresh)))),
+ menu(c,'Payments','Customer collections and supplier payments',Icons.payments_rounded,()=>corePayments(c,db)),
+ menu(c,'Expenses','Rent, salary, transport and other expenses',Icons.account_balance_wallet_rounded,()=>coreExpense(c,db)),
+ menu(c,'Reports & Export','PDF, Excel and CSV',Icons.analytics_rounded,()=>Navigator.push(c,MaterialPageRoute(builder:(_)=>CoreReports(db)))),
+ menu(c,'Business Profile','GSTIN, address, UPI and invoice settings',Icons.storefront_rounded,()=>coreBusiness(c,db)),
+ menu(c,'Backup & Restore','Offline data protection',Icons.backup_rounded,()=>msg(c,'Backup and restore will be added in the next release.')),
+ menu(c,'PIN / Biometric','Protect business data',Icons.lock_rounded,()=>msg(c,'PIN and biometric protection will be added in the security release.'))
+]);}
+
+class CoreInventory extends StatelessWidget{final Database db;final VoidCallback refresh;const CoreInventory(this.db,this.refresh,{super.key});@override Widget build(BuildContext c)=>Scaffold(appBar:AppBar(title:const Text('Inventory',style:TextStyle(fontWeight:FontWeight.w900)),actions:[IconButton(onPressed:()=>coreProduct(c,db),icon:const Icon(Icons.add_circle_rounded))]),body:FutureBuilder(future:db.query('dm_products',orderBy:'name'),builder:(c,s){if(!s.hasData)return const Center(child:CircularProgressIndicator());final r=s.data!;return ListView(padding:const EdgeInsets.all(18),children:[if(r.isEmpty)emptyBox('No products','Add products with KG, PCS, Litre or another unit.'),...r.map((x){final low=(x['qty'] as num)<=((x['min_qty'] as num));return Card(child:ListTile(leading:CircleAvatar(backgroundColor:low?const Color(0xFFFFE8E8):const Color(0xFFEEF0FF),child:Icon(Icons.inventory_2_rounded,color:low?Colors.red:const Color(0xFF5B5CE2))),title:Text(x['name'].toString(),style:const TextStyle(fontWeight:FontWeight.w800)),subtitle:Text(x['unit'].toString()+' • GST '+x['gst'].toString()+'% • HSN '+x['hsn'].toString()),trailing:Column(mainAxisAlignment:MainAxisAlignment.center,crossAxisAlignment:CrossAxisAlignment.end,children:[Text((x['qty'] as num).toStringAsFixed(2)+' '+x['unit'].toString(),style:const TextStyle(fontWeight:FontWeight.w900)),Text(money(x['sell'] as num),style:const TextStyle(fontSize:10))]))})]);});}
+
+Future<void> coreProduct(BuildContext c,Database db)async{final n=TextEditingController(),sku=TextEditingController(),q=TextEditingController(),buy=TextEditingController(),sell=TextEditingController(),gst=TextEditingController(text:'0'),min=TextEditingController(text:'0'),hsn=TextEditingController();String unit='PCS';await showDialog(context:c,builder:(d)=>StatefulBuilder(builder:(d,set)=>AlertDialog(title:const Text('Add Product',style:TextStyle(fontWeight:FontWeight.w900)),content:SingleChildScrollView(child:Column(children:[
+TextField(controller:n,decoration:const InputDecoration(labelText:'Product name *')),TextField(controller:sku,decoration:const InputDecoration(labelText:'SKU / Barcode')),TextField(controller:hsn,decoration:const InputDecoration(labelText:'HSN/SAC')),
+Row(children:[Expanded(child:TextField(controller:q,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Opening stock'))),const SizedBox(width:7),Expanded(child:DropdownButtonFormField<String>(value:unit,decoration:const InputDecoration(labelText:'Unit'),items:['PCS','KG','GM','MG','LITRE','ML','METER','CM','BOX','PACKET','BAG','BOTTLE','DOZEN','PAIR','SET'].map((x)=>DropdownMenuItem(value:x,child:Text(x))).toList(),onChanged:(v)=>set(()=>unit=v!)))]),
+Row(children:[Expanded(child:TextField(controller:buy,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Purchase price'))),const SizedBox(width:7),Expanded(child:TextField(controller:sell,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Selling price')))]),
+Row(children:[Expanded(child:TextField(controller:gst,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'GST %'))),const SizedBox(width:7),Expanded(child:TextField(controller:min,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Low-stock level')))])
+])),actions:[TextButton(onPressed:()=>Navigator.pop(d),child:const Text('Cancel')),FilledButton(onPressed:()async{if(n.text.trim().isEmpty)return;await db.insert('dm_products',{'name':n.text.trim(),'sku':sku.text.trim(),'barcode':sku.text.trim(),'category':'','hsn':hsn.text.trim(),'unit':unit,'gst':double.tryParse(gst.text)??0,'buy':double.tryParse(buy.text)??0,'sell':double.tryParse(sell.text)??0,'wholesale':0,'qty':double.tryParse(q.text)??0,'min_qty':double.tryParse(min.text)??0});if(d.mounted)Navigator.pop(d);},child:const Text('Save'))]));}
+
+Future<void> coreParty(BuildContext c,Database db,String type)async{final n=TextEditingController(),p=TextEditingController(),a=TextEditingController(),s=TextEditingController(text:'West Bengal'),g=TextEditingController(),l=TextEditingController(),days=TextEditingController();await showDialog(context:c,builder:(d)=>AlertDialog(title:Text(type=='customer'?'New Customer':'New Supplier',style:const TextStyle(fontWeight:FontWeight.w900)),content:SingleChildScrollView(child:Column(children:[TextField(controller:n,decoration:const InputDecoration(labelText:'Name *')),TextField(controller:p,decoration:const InputDecoration(labelText:'Phone')),TextField(controller:a,decoration:const InputDecoration(labelText:'Address')),TextField(controller:s,decoration:const InputDecoration(labelText:'State')),TextField(controller:g,decoration:const InputDecoration(labelText:'GSTIN')),Row(children:[Expanded(child:TextField(controller:l,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Credit limit'))),const SizedBox(width:7),Expanded(child:TextField(controller:days,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'Credit days')))]))),actions:[TextButton(onPressed:()=>Navigator.pop(d),child:const Text('Cancel')),FilledButton(onPressed:()async{if(n.text.trim().isEmpty)return;await db.insert('dm_parties',{'name':n.text.trim(),'phone':p.text.trim(),'address':a.text.trim(),'state':s.text.trim(),'gstin':g.text.trim(),'type':type,'balance':0,'credit_limit':double.tryParse(l.text)??0,'credit_days':int.tryParse(days.text)??0});if(d.mounted)Navigator.pop(d);},child:const Text('Save'))]));}
+
+Future<void> corePayment(BuildContext c,Database db,String type)async{final list=await db.query('dm_parties',where:'type=?',whereArgs:[type=='IN'?'customer':'supplier'],orderBy:'name');if(!c.mounted)return;int? party;String mode='Cash';final a=TextEditingController(),ref=TextEditingController();await showDialog(context:c,builder:(d)=>StatefulBuilder(builder:(d,set)=>AlertDialog(title:Text(type=='IN'?'Payment In':'Payment Out'),content:Column(mainAxisSize:MainAxisSize.min,children:[DropdownButtonFormField<int?>(value:party,decoration:InputDecoration(labelText:type=='IN'?'Customer':'Supplier'),items:list.map((x)=>DropdownMenuItem<int?>(value:x['id'] as int,child:Text(x['name'].toString()))).toList(),onChanged:(v)=>set(()=>party=v)),TextField(controller:a,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Amount')),DropdownButtonFormField<String>(value:mode,decoration:const InputDecoration(labelText:'Mode'),items:['Cash','UPI','Bank','Card','Cheque'].map((x)=>DropdownMenuItem(value:x,child:Text(x))).toList(),onChanged:(v)=>set(()=>mode=v!)),TextField(controller:ref,decoration:const InputDecoration(labelText:'Reference'))]),actions:[TextButton(onPressed:()=>Navigator.pop(d),child:const Text('Cancel')),FilledButton(onPressed:()async{final v=double.tryParse(a.text)??0;if(v<=0)return;await db.insert('dm_payments',{'party_id':party,'type':type,'amount':v,'date':now(),'mode':mode,'reference':ref.text});if(party!=null)await db.rawUpdate('UPDATE dm_parties SET balance=balance-? WHERE id=?',[v,party]);if(d.mounted)Navigator.pop(d);},child:const Text('Save'))])));}
+
+Future<void> coreExpense(BuildContext c,Database db)async{String cat='Other',mode='Cash';final a=TextEditingController(),n=TextEditingController();await showDialog(context:c,builder:(d)=>StatefulBuilder(builder:(d,set)=>AlertDialog(title:const Text('Business Expense'),content:Column(mainAxisSize:MainAxisSize.min,children:[TextField(controller:a,keyboardType:const TextInputType.numberWithOptions(decimal:true),decoration:const InputDecoration(labelText:'Amount')),DropdownButtonFormField<String>(value:cat,decoration:const InputDecoration(labelText:'Category'),items:['Rent','Electricity','Salary','Transport','Packaging','Advertisement','Internet','Maintenance','Other'].map((x)=>DropdownMenuItem(value:x,child:Text(x))).toList(),onChanged:(v)=>set(()=>cat=v!)),DropdownButtonFormField<String>(value:mode,decoration:const InputDecoration(labelText:'Payment mode'),items:['Cash','UPI','Bank','Card'].map((x)=>DropdownMenuItem(value:x,child:Text(x))).toList(),onChanged:(v)=>set(()=>mode=v!)),TextField(controller:n,decoration:const InputDecoration(labelText:'Note'))]),actions:[TextButton(onPressed:()=>Navigator.pop(d),child:const Text('Cancel')),FilledButton(onPressed:()async{final v=double.tryParse(a.text)??0;if(v<=0)return;await db.insert('dm_expenses',{'category':cat,'amount':v,'date':now(),'mode':mode,'note':n.text});if(d.mounted)Navigator.pop(d);},child:const Text('Save'))])));}
+
+Future<void> corePayments(BuildContext c,Database db)async{final r=await db.rawQuery('SELECT p.*,q.name party FROM dm_payments p LEFT JOIN dm_parties q ON q.id=p.party_id ORDER BY p.id DESC');if(!c.mounted)return;Navigator.push(c,MaterialPageRoute(builder:(_)=>SimplePage('Payments','Payment history',r)));}
+
+class CoreReports extends StatelessWidget{final Database db;const CoreReports(this.db,{super.key});@override Widget build(BuildContext c)=>Scaffold(appBar:AppBar(title:const Text('Reports & Export',style:TextStyle(fontWeight:FontWeight.w900))),body:ListView(padding:const EdgeInsets.all(18),children:[
+reportCard('Business Summary','Sales, purchase, profit, receivable, payable and expenses',Icons.analytics_rounded,()=>corePdf(c,db)),
+reportCard('Excel Workbook','Separate sheets for sales, purchase, parties, products, payments and expenses',Icons.table_chart_rounded,()=>coreExcel(c,db)),
+reportCard('CSV Export','Portable business data',Icons.data_object_rounded,()=>coreCsv(c,db)),
+reportCard('PDF Report','A4 report ready to share or print',Icons.picture_as_pdf_rounded,()=>corePdf(c,db))
+]));}
+Future<Directory> coreFolder()async{final d=await getApplicationDocumentsDirectory();final f=Directory(join(d.path,'DokanMate_Exports'));if(!await f.exists())await f.create(recursive:true);return f;}
+Future<void> coreShare(String p,String t)async=>Share.shareXFiles([XFile(p)],text:t);
+Future<void> coreExcel(BuildContext c,Database db)async{try{final book=Excel.createExcel();for(final t in ['dm_sales','dm_purchases','dm_parties','dm_products','dm_payments','dm_expenses','dm_stock']){final r=await db.query(t);final sh=book[t];if(r.isEmpty){sh.appendRow([TextCellValue('No data')]);continue;}final k=r.first.keys.toList();sh.appendRow(k.map((x)=>TextCellValue(x)).toList());for(final row in r)sh.appendRow(k.map((x)=>excelCell(row[x])).toList());}final bytes=book.save();if(bytes==null)throw Exception('Workbook failed');final f=File(join((await coreFolder()).path,'DokanMate_'+DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())+'.xlsx'));await f.writeAsBytes(bytes,flush:true);await coreShare(f.path,'DokanMate Excel export');msg(c,'Excel exported successfully.');}catch(e){msg(c,'Excel failed: '+e.toString());}}
+CellValue excelCell(Object? v){if(v==null)return TextCellValue('');if(v is int)return IntCellValue(v);if(v is num)return DoubleCellValue(v.toDouble());return TextCellValue(v.toString());}
+Future<void> coreCsv(BuildContext c,Database db)async{try{final b=StringBuffer();for(final t in ['dm_sales','dm_purchases','dm_parties','dm_products','dm_payments','dm_expenses','dm_stock']){final r=await db.query(t);b.writeln(t.toUpperCase());if(r.isEmpty){b.writeln('No data');continue;}final k=r.first.keys.toList();b.writeln(k.join(','));for(final row in r)b.writeln(k.map((x)=>'"'+(row[x]??'').toString().replaceAll('"','""')+'"').join(','));b.writeln();}final f=File(join((await coreFolder()).path,'DokanMate_'+DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())+'.csv'));await f.writeAsString(b.toString(),flush:true);await coreShare(f.path,'DokanMate CSV export');msg(c,'CSV exported successfully.');}catch(e){msg(c,'CSV failed: '+e.toString());}}
+Future<void> corePdf(BuildContext c,Database db)async{try{final s=(await db.rawQuery('SELECT COALESCE(SUM(total),0) sales,COALESCE(SUM(paid),0) paid,COALESCE(SUM(due),0) due FROM dm_sales')).first;final p=(await db.rawQuery('SELECT COALESCE(SUM(total),0) purchase,COALESCE(SUM(due),0) payable FROM dm_purchases')).first;final e=(await db.rawQuery('SELECT COALESCE(SUM(amount),0) expense FROM dm_expenses')).first;final result=(s['sales'] as num).toDouble()-(p['purchase'] as num).toDouble()-(e['expense'] as num).toDouble();final doc=pw.Document();doc.addPage(pw.MultiPage(pageFormat:PdfPageFormat.a4,build:(_)=>[pw.Text('DokanMate Business Report',style:pw.TextStyle(fontSize:24,fontWeight:pw.FontWeight.bold)),pw.Text(DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.now())),pw.SizedBox(height:18),pw.TableHelper.fromTextArray(headers:['Metric','Amount'],data:[['Sales',money(s['sales'] as num)],['Collection',money(s['paid'] as num)],['Receivable',money(s['due'] as num)],['Purchase',money(p['purchase'] as num)],['Payable',money(p['payable'] as num)],['Expenses',money(e['expense'] as num)],['Net result',money(result)]])),pw.SizedBox(height:20),pw.Text('DokanMate offline business manager') ]));final f=File(join((await coreFolder()).path,'DokanMate_Report_'+DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())+'.pdf'));await f.writeAsBytes(await doc.save(),flush:true);await coreShare(f.path,'DokanMate PDF report');msg(c,'PDF created successfully.');}catch(e){msg(c,'PDF failed: '+e.toString());}}
