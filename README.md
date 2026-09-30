@@ -1,1 +1,1 @@
-# dokanmate
+# DokanMate\n\nOffline-first Android shop management app for small businesses.\n\nFlutter + Material 3 + SQLite. GitHub Actions builds the release APK.\n\nCore: dashboard, sales, customer due, stock, reports, shop profile and PIN configuration.
