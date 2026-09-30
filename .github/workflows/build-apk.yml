@@ -19,6 +19,8 @@ jobs:
           cache: true
       - name: Create Android project
         run: flutter create --platforms=android --org com.dokanmate .
+      - name: Set Android NDK version
+        run: sed -i '/android {/a\\    ndkVersion = "27.0.12077973"' android/app/build.gradle.kts
       - name: Remove generated test
         run: rm -f test/widget_test.dart
       - name: Get dependencies
