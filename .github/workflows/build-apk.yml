@@ -19,6 +19,8 @@ jobs:
           cache: true
       - name: Create Android project
         run: flutter create --platforms=android --org com.dokanmate .
+      - name: Remove generated test
+        run: rm -f test/widget_test.dart
       - name: Get dependencies
         run: flutter pub get
       - name: Analyze
