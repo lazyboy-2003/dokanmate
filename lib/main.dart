@@ -686,7 +686,8 @@ class InvoicePage extends StatefulWidget {
   final Database db;
   final bool purchase;
   final VoidCallback refresh;
-  const InvoicePage(this.db, this.purchase, this.refresh, {super.key});
+  final int? editId;
+  const InvoicePage(this.db, this.purchase, this.refresh, {super.key, this.editId});
   @override
   State<InvoicePage> createState() => _InvoicePageState();
 }
@@ -697,6 +698,7 @@ class _InvoicePageState extends State<InvoicePage> {
   List<InvoiceLine> lines = [];
   int? partyId;
   String mode = '';
+  String? existingInvoice;
   final paid = TextEditingController();
 
   double get subtotal => lines.fold(0, (sum, line) => sum + line.qty * line.rate);
@@ -720,6 +722,25 @@ class _InvoicePageState extends State<InvoicePage> {
       orderBy: 'name',
     );
     final productRows = await widget.db.query('products', orderBy: 'name');
+    if (widget.editId != null) {
+      final table = widget.purchase ? 'purchases' : 'sales';
+      final itemTable = widget.purchase ? 'purchase_items' : 'sale_items';
+      final key = widget.purchase ? 'purchase_id' : 'sale_id';
+      final h = await widget.db.query(table, where: 'id=?', whereArgs: [widget.editId]);
+      final its = await widget.db.query(itemTable, where: '$key=?', whereArgs: [widget.editId]);
+      if (h.isNotEmpty) {
+        final row = h.first;
+        existingInvoice = row['invoice']?.toString();
+        partyId = (row['party_id'] as num?)?.toInt();
+        mode = row['mode']?.toString() ?? '';
+        paid.text = ((row['paid'] as num?) ?? 0).toString();
+        lines = its.map((it) => InvoiceLine(
+          (it['product_id'] as num).toInt(), it['name'].toString(), it['unit'].toString(),
+          (it['rate'] as num).toDouble(), (it['gst'] as num).toDouble(),
+          (it['qty'] as num).toDouble(), (it['discount'] as num).toDouble(),
+        )).toList();
+      }
+    }
     if (mounted) {
       setState(() {
         parties = pRows;
@@ -757,7 +778,7 @@ class _InvoicePageState extends State<InvoicePage> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    tr(widget.purchase ? 'Purchase Invoice' : 'Sales Invoice'),
+                    tr(widget.editId != null ? (widget.purchase ? 'Edit Purchase Invoice' : 'Edit Sales Invoice') : (widget.purchase ? 'Purchase Invoice' : 'Sales Invoice')),
                     style: const TextStyle(color: Colors.white, fontSize: 21, fontWeight: FontWeight.w900),
                   ),
                 ),
@@ -843,7 +864,7 @@ class _InvoicePageState extends State<InvoicePage> {
           FilledButton.icon(
             onPressed: saveInvoice,
             icon: const Icon(Icons.save_rounded),
-            label: const Text('Save Invoice'),
+            label: Text(widget.editId != null ? 'Update Invoice' : 'Save Invoice'),
             style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(54)),
           ),
         ],
@@ -999,10 +1020,32 @@ class _InvoicePageState extends State<InvoicePage> {
     final itemKey = widget.purchase ? 'purchase_id' : 'sale_id';
     final maxIdRows = await widget.db.rawQuery('SELECT COALESCE(MAX(id),0) AS last_id FROM ' + table);
     final nextNumber = ((maxIdRows.first['last_id'] as num?) ?? 0).toInt() + 1;
-    final invoice = (widget.purchase ? 'PUR-' : 'INV-') + nextNumber.toString().padLeft(5, '0');
+    final invoice = widget.editId != null ? (existingInvoice ?? ((widget.purchase ? 'PUR-' : 'INV-') + nextNumber.toString().padLeft(5, '0'))) : ((widget.purchase ? 'PUR-' : 'INV-') + nextNumber.toString().padLeft(5, '0'));
     final due = (total - paidAmount).clamp(0.0, double.infinity);
 
     await widget.db.transaction((tx) async {
+      if (widget.editId != null) {
+        final oldRows = await tx.query(widget.purchase ? 'purchases' : 'sales', where: 'id=?', whereArgs: [widget.editId]);
+        final old = oldRows.first;
+        final oldParty = (old['party_id'] as num?)?.toInt();
+        final oldDue = ((old['due'] as num?) ?? 0).toDouble();
+        if (oldParty != null && oldDue > 0) await tx.rawUpdate('UPDATE parties SET balance=balance-? WHERE id=?', [oldDue, oldParty]);
+        await tx.delete('payments', where: 'reference=?', whereArgs: [old['invoice']]);
+        final oldItems = await tx.query(widget.purchase ? 'purchase_items' : 'sale_items', where: (widget.purchase ? 'purchase_id=?' : 'sale_id=?'), whereArgs: [widget.editId]);
+        for (final oi in oldItems) {
+          final q = ((oi['qty'] as num?) ?? 0).toDouble();
+          final productId = (oi['product_id'] as num?)?.toInt();
+          if (productId != null) {
+            final reverseDelta = widget.purchase ? -q : q;
+            await tx.rawUpdate('UPDATE products SET qty=qty+? WHERE id=?', [reverseDelta, productId]);
+          }
+        }
+        await tx.delete(widget.purchase ? 'purchase_items' : 'sale_items', where: widget.purchase ? 'purchase_id=?' : 'sale_id=?', whereArgs: [widget.editId]);
+        await tx.update(widget.purchase ? 'purchases' : 'sales', {
+          'party_id': partyId, 'subtotal': subtotal, 'discount': discount, 'taxable': taxable,
+          'cgst': cgst, 'sgst': sgst, 'igst': igst, 'total': total, 'paid': paidAmount, 'due': due, 'mode': mode,
+        }, where: 'id=?', whereArgs: [widget.editId]);
+      }
       final id = await tx.insert(table, {
         'invoice': invoice,
         'date': today(),
