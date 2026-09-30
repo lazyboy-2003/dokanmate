@@ -11,6 +11,7 @@ import 'package:pdf/pdf.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:printing/printing.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 final ValueNotifier<String> appLanguage = ValueNotifier<String>('English');
 
@@ -281,11 +282,36 @@ class _IntroPageState extends State<IntroPage> with SingleTickerProviderStateMix
                         child: const Icon(Icons.storefront_rounded, size: 48, color: Colors.white),
                       ),
                       const SizedBox(height: 22),
-                      const Text('DokanMate', style: TextStyle(color: Colors.white, fontSize: 34, fontWeight: FontWeight.w900, letterSpacing: .5)),
-                      const SizedBox(height: 10),
-                      const Text('Made with love ❤️', style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w600)),
-                      const SizedBox(height: 5),
-                      const Text('Only for you', style: TextStyle(color: Color(0xFFE0E7FF), fontSize: 14)),
+                      Text(
+                        'DokanMate',
+                        style: GoogleFonts.spaceGrotesk(
+                          color: Colors.white,
+                          fontSize: 35,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.1,
+                          height: 1.05,
+                        ),
+                      ),
+                      const SizedBox(height: 11),
+                      Text(
+                        'Made with love ❤️',
+                        style: GoogleFonts.dmSans(
+                          color: Colors.white.withOpacity(.96),
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
+                          letterSpacing: .25,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Only for you',
+                        style: GoogleFonts.dmSans(
+                          color: const Color(0xFFE0E7FF),
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w400,
+                          letterSpacing: .45,
+                        ),
+                      ),
                       const SizedBox(height: 34),
                       const SizedBox(width: 28, height: 28, child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white)),
                     ],
