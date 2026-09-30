@@ -1695,8 +1695,8 @@ Future<void> exportPdf(BuildContext context, Database db) async {
     final cogs = (await db.rawQuery('SELECT COALESCE(SUM(qty * cost),0) total FROM sale_items')).first;
     final ex = (await db.rawQuery('SELECT COALESCE(SUM(amount),0) total FROM expenses')).first;
     final result = (s['taxable'] as num).toDouble() - (cogs['total'] as num).toDouble() - (ex['total'] as num).toDouble();
-    final pdfFont = await PdfGoogleFonts.notoSansRegular();
-    final pdfBold = await PdfGoogleFonts.notoSansBold();
+    final pdfFont = await PdfGoogleFonts.notoSansDevanagariRegular();
+    final pdfBold = await PdfGoogleFonts.notoSansDevanagariBold();
     final pdfTheme = pw.ThemeData.withFont(base: pdfFont, bold: pdfBold);
     final doc = pw.Document(theme: pdfTheme);
 
