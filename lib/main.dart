@@ -55,7 +55,7 @@ class Home extends StatelessWidget {
         Wrap(spacing:10,runSpacing:10,children:[
           Box('Sales',money(sale),Icons.trending_up),Box('Collection',money(paid),Icons.payments),Box('Due',money(due),Icons.wallet),Box('Profit',money(profit),Icons.bar_chart),Box('Stock',money(stock),Icons.inventory),Box('Customers',customers.length.toString(),Icons.people)]),
         const SizedBox(height:20),const Text('Recent Sales',style:TextStyle(fontSize:20,fontWeight:FontWeight.bold)),
-        ...sales.reversed.take(8).map((x)=>Card(child:ListTile(title:Text(money(x['amount'] as num)),subtitle:Text('Paid ' + money(x['paid'] as num)),trailing:Text(money((x['amount'] as num)-(x['cost'] as num)))))),
+        ...sales.reversed.take(8).map((x) => Card(child: ListTile(title: Text(money(x['amount'] as num)), subtitle: Text('Paid ' + money(x['paid'] as num)), trailing: Text(money((x['amount'] as num) - (x['cost'] as num)))))).toList(),
       ]);
     });
 }
