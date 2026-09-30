@@ -293,8 +293,10 @@ class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
         if (supported && available.isNotEmpty) {
           final ok = await _auth.authenticate(
             localizedReason: 'Unlock DokanMate',
-            biometricOnly: true,
-            persistAcrossBackgrounding: true,
+            options: const AuthenticationOptions(
+              biometricOnly: true,
+              stickyAuth: true,
+            ),
           );
           if (ok) {
             if (mounted) setState(() { locked = false; error = null; });
@@ -403,7 +405,10 @@ Future<void> securityDialog(BuildContext context) async {
                       if (dialogContext.mounted) showMsg(dialogContext, 'No enrolled fingerprint/face biometric is available on this phone.');
                       return;
                     }
-                    final ok = await auth.authenticate(localizedReason: 'Confirm biometric unlock for DokanMate', biometricOnly: true);
+                    final ok = await auth.authenticate(
+                      localizedReason: 'Confirm biometric unlock for DokanMate',
+                      options: const AuthenticationOptions(biometricOnly: true),
+                    );
                     if (ok) setState(() => biometric = true);
                   } catch (_) {
                     if (dialogContext.mounted) showMsg(dialogContext, 'Biometric setup failed. Please check your phone security settings.');
