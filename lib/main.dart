@@ -12,6 +12,8 @@ import 'package:intl/intl.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:printing/printing.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:local_auth/local_auth.dart';
 
 final ValueNotifier<String> appLanguage = ValueNotifier<String>('English');
 
@@ -189,6 +191,21 @@ class _DokanMateState extends State<DokanMate> {
       MorePage(widget.db, refresh, key: ValueKey('more$refreshKey')),
     ];
 
+    final appHome = Scaffold(
+      body: SafeArea(child: IndexedStack(index: tab, children: pages)),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: tab,
+        onDestinationSelected: (value) => setState(() => tab = value),
+        destinations: [
+          NavigationDestination(icon: Icon(Icons.grid_view_rounded), label: tr('Home')),
+          NavigationDestination(icon: Icon(Icons.receipt_long_rounded), label: tr('Sales')),
+          NavigationDestination(icon: Icon(Icons.shopping_cart_rounded), label: tr('Purchase')),
+          NavigationDestination(icon: Icon(Icons.people_alt_rounded), label: tr('Parties')),
+          NavigationDestination(icon: Icon(Icons.more_horiz_rounded), label: tr('More')),
+        ],
+      ),
+    );
+
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'DokanMate',
@@ -212,30 +229,218 @@ class _DokanMateState extends State<DokanMate> {
           ),
         ),
       ),
-      home: Scaffold(
-        body: SafeArea(
-          child: IndexedStack(index: tab, children: pages),
-        ),
-        bottomNavigationBar: NavigationBar(
-          selectedIndex: tab,
-          onDestinationSelected: (value) {
-            setState(() {
-              tab = value;
-            });
-          },
-          destinations: [
-            NavigationDestination(icon: Icon(Icons.grid_view_rounded), label: tr('Home')),
-            NavigationDestination(icon: Icon(Icons.receipt_long_rounded), label: tr('Sales')),
-            NavigationDestination(icon: Icon(Icons.shopping_cart_rounded), label: tr('Purchase')),
-            NavigationDestination(icon: Icon(Icons.people_alt_rounded), label: tr('Parties')),
-            NavigationDestination(icon: Icon(Icons.more_horiz_rounded), label: tr('More')),
-          ],
-        ),
-      ),
+      home: LockGate(db: widget.db, child: appHome),
         );
       },
     );
   }
+}
+
+
+
+class LockGate extends StatefulWidget {
+  final Database db;
+  final Widget child;
+  const LockGate({required this.db, required this.child, super.key});
+  @override
+  State<LockGate> createState() => _LockGateState();
+}
+
+class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
+  static const _storage = FlutterSecureStorage();
+  final _auth = LocalAuthentication();
+  bool loading = true;
+  bool locked = false;
+  String? error;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _checkLock();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && !loading) {
+      _checkLock(force: true);
+    }
+  }
+
+  Future<void> _checkLock({bool force = false}) async {
+    final enabled = await _storage.read(key: 'app_lock_enabled') == '1';
+    if (!enabled) {
+      if (mounted) setState(() { loading = false; locked = false; error = null; });
+      return;
+    }
+    if (!force && locked) return;
+    if (mounted) setState(() { loading = false; locked = true; error = null; });
+    await _authenticate();
+  }
+
+  Future<void> _authenticate() async {
+    try {
+      final useBiometric = await _storage.read(key: 'app_biometric_enabled') == '1';
+      if (useBiometric) {
+        final supported = await _auth.isDeviceSupported();
+        final available = await _auth.getAvailableBiometrics();
+        if (supported && available.isNotEmpty) {
+          final ok = await _auth.authenticate(
+            localizedReason: 'Unlock DokanMate',
+            biometricOnly: true,
+            persistAcrossBackgrounding: true,
+          );
+          if (ok) {
+            if (mounted) setState(() { locked = false; error = null; });
+            return;
+          }
+        }
+      }
+    } catch (_) {}
+
+    if (!mounted) return;
+    final pin = await _storage.read(key: 'app_pin');
+    if (pin == null || pin.isEmpty) {
+      setState(() { locked = false; error = null; });
+      return;
+    }
+    final controller = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Row(children: [Icon(Icons.lock_rounded), SizedBox(width: 8), Text('DokanMate Locked')]),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          obscureText: true,
+          maxLength: 6,
+          decoration: const InputDecoration(labelText: 'Enter app PIN', prefixIcon: Icon(Icons.password_rounded)),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text == pin),
+            child: const Text('Unlock'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (!mounted) return;
+    if (ok == true) {
+      setState(() { locked = false; error = null; });
+    } else {
+      setState(() { locked = true; error = 'Incorrect PIN'; });
+      await Future.delayed(const Duration(milliseconds: 250));
+      if (mounted) _authenticate();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (loading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (!locked) return widget.child;
+    return Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.lock_rounded, size: 54, color: Color(0xFF5B5CE2)),
+            const SizedBox(height: 14),
+            const Text('DokanMate is locked', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+            const SizedBox(height: 6),
+            Text(error ?? 'Authenticate to continue', style: const TextStyle(color: Color(0xFF777B86))),
+            const SizedBox(height: 18),
+            FilledButton.icon(onPressed: _authenticate, icon: const Icon(Icons.fingerprint_rounded), label: const Text('Unlock')),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+Future<void> securityDialog(BuildContext context) async {
+  const storage = FlutterSecureStorage();
+  final auth = LocalAuthentication();
+  final currentPin = await storage.read(key: 'app_pin') ?? '';
+  final enabled = currentPin.isNotEmpty;
+  bool biometric = await storage.read(key: 'app_biometric_enabled') == '1';
+  final pin = TextEditingController();
+  final confirm = TextEditingController();
+
+  await showDialog(
+    context: context,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (dialogContext, setState) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+        title: const Row(children: [Icon(Icons.security_rounded), SizedBox(width: 8), Text('PIN / Biometric')]),
+        content: SingleChildScrollView(
+          child: Column(
+            children: [
+              Text(enabled ? 'Change your 4–6 digit app PIN or update biometric unlock.' : 'Set a 4–6 digit PIN to protect your business data.', style: const TextStyle(fontSize: 12, color: Color(0xFF777B86))),
+              const SizedBox(height: 14),
+              TextField(controller: pin, keyboardType: TextInputType.number, obscureText: true, maxLength: 6, decoration: const InputDecoration(labelText: 'New PIN', prefixIcon: Icon(Icons.password_rounded))),
+              TextField(controller: confirm, keyboardType: TextInputType.number, obscureText: true, maxLength: 6, decoration: const InputDecoration(labelText: 'Confirm PIN', prefixIcon: Icon(Icons.check_circle_outline_rounded))),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: biometric,
+                title: const Text('Biometric unlock'),
+                subtitle: const Text('Fingerprint / Face supported by your phone'),
+                secondary: const Icon(Icons.fingerprint_rounded),
+                onChanged: (v) async {
+                  if (!v) { setState(() => biometric = false); return; }
+                  try {
+                    final supported = await auth.isDeviceSupported();
+                    final available = await auth.getAvailableBiometrics();
+                    if (!supported || available.isEmpty) {
+                      if (dialogContext.mounted) showMsg(dialogContext, 'No enrolled fingerprint/face biometric is available on this phone.');
+                      return;
+                    }
+                    final ok = await auth.authenticate(localizedReason: 'Confirm biometric unlock for DokanMate', biometricOnly: true);
+                    if (ok) setState(() => biometric = true);
+                  } catch (_) {
+                    if (dialogContext.mounted) showMsg(dialogContext, 'Biometric setup failed. Please check your phone security settings.');
+                  }
+                },
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () async {
+              final newPin = pin.text.trim();
+              final confirmPin = confirm.text.trim();
+              if (newPin.isNotEmpty && (newPin.length < 4 || newPin.length > 6 || int.tryParse(newPin) == null)) {
+                showMsg(dialogContext, 'PIN must contain 4–6 digits.'); return;
+              }
+              if (newPin.isNotEmpty && newPin != confirmPin) {
+                showMsg(dialogContext, 'PIN confirmation does not match.'); return;
+              }
+              if (!enabled && newPin.isEmpty) {
+                showMsg(dialogContext, 'Please set a PIN first.'); return;
+              }
+              final finalPin = newPin.isNotEmpty ? newPin : currentPin;
+              await storage.write(key: 'app_pin', value: finalPin);
+              await storage.write(key: 'app_lock_enabled', value: '1');
+              await storage.write(key: 'app_biometric_enabled', value: biometric ? '1' : '0');
+              if (dialogContext.mounted) Navigator.pop(dialogContext);
+              if (context.mounted) showMsg(context, biometric ? 'PIN and biometric lock enabled.' : 'PIN lock enabled.');
+            },
+            child: Text(enabled ? 'Update Security' : 'Enable Lock'),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 
@@ -1163,11 +1368,12 @@ class _InvoicePageState extends State<InvoicePage> {
         }
         await tx.delete('stock_moves', where: 'reference=?', whereArgs: [old['invoice']]);
         await tx.delete(widget.purchase ? 'purchase_items' : 'sale_items', where: widget.purchase ? 'purchase_id=?' : 'sale_id=?', whereArgs: [widget.editId]);
-        await tx.update(widget.purchase ? 'purchases' : 'sales', {
+        final updateValues = <String, Object?>{
           'party_id': partyId, 'subtotal': subtotal, 'discount': discount, 'taxable': taxable,
           'cgst': cgst, 'sgst': sgst, 'igst': igst, 'total': total, 'paid': paidAmount, 'due': due, 'mode': mode,
-          'place_of_supply': partyState,
-        }, where: 'id=?', whereArgs: [widget.editId]);
+        };
+        if (!widget.purchase) updateValues['place_of_supply'] = partyState;
+        await tx.update(widget.purchase ? 'purchases' : 'sales', updateValues, where: 'id=?', whereArgs: [widget.editId]);
       }
       final id = widget.editId ?? await tx.insert(table, {
         'invoice': invoice,
@@ -1231,7 +1437,6 @@ class _InvoicePageState extends State<InvoicePage> {
     if (mounted) {
       widget.refresh();
       Navigator.pop(context);
-      await showMsg(context, 'Invoice ' + invoice + ' saved successfully.');
     }
   }
 }
@@ -1369,7 +1574,7 @@ class MorePage extends StatelessWidget {
         menu(tr('Merchant Profile'), 'Store name, owner, phone, address, state, GSTIN and UPI — used on invoices', Icons.storefront_rounded, () => businessDialog(context, db)),
         menu(tr('Language'), 'English / বাংলা / हिन्दी', Icons.translate_rounded, () => languageDialog(context, db)),
         menu('Backup & Restore', 'Offline data backup', Icons.backup_rounded, () => showMsg(context, 'Backup and restore will be added next.')),
-        menu('PIN / Biometric', 'Protect business data', Icons.lock_rounded, () => showMsg(context, 'PIN and biometric protection will be added next.')),
+        menu('PIN / Biometric', 'Protect business data with app PIN and fingerprint / face', Icons.lock_rounded, () => securityDialog(context)),
       ],
     );
   }
