@@ -322,26 +322,30 @@ Widget statCard(String title, String value, IconData icon) {
     tween: Tween(begin: .94, end: 1),
     duration: const Duration(milliseconds: 500),
     curve: Curves.easeOutBack,
-    builder: (context, scale, child) => Transform.scale(scale: scale, child: child),
+    builder: (context, scale, child) => Transform.scale(
+      scale: scale,
+      child: child,
+    ),
     child: Container(
       padding: const EdgeInsets.all(15),
-    decoration: BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(20),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Icon(icon, color: const Color(0xFF5B5CE2)),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: const TextStyle(fontSize: 11, color: Color(0xFF777B86))),
-            Text(value, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15)),
-          ],
-        ),
-      ],
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Icon(icon, color: const Color(0xFF5B5CE2)),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: const TextStyle(fontSize: 11, color: Color(0xFF777B86))),
+              Text(value, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15)),
+            ],
+          ),
+        ],
+      ),
     ),
   );
 }
