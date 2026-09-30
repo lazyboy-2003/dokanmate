@@ -1791,6 +1791,51 @@ class _GstReportsPageState extends State<GstReportsPage> {
   Widget _gstCard(String t, String s, IconData i, VoidCallback tap) => Card(child: ListTile(onTap: tap, leading: CircleAvatar(backgroundColor: const Color(0xFFEEF0FF), child: Icon(i, color: const Color(0xFF5B5CE2))), title: Text(t, style: const TextStyle(fontWeight: FontWeight.w900)), subtitle: Text(s), trailing: const Icon(Icons.picture_as_pdf_rounded)));
 }
 
+Future<void> stockSummaryPdf(BuildContext context, Database db) async {
+  try {
+    final rows = await db.query('products', orderBy: 'name');
+    final totalCost = rows.fold<double>(0, (s, x) => s + (((x['qty'] as num?) ?? 0).toDouble() * ((x['buy'] as num?) ?? 0).toDouble()));
+    final totalRetail = rows.fold<double>(0, (s, x) => s + (((x['qty'] as num?) ?? 0).toDouble() * ((x['sell'] as num?) ?? 0).toDouble()));
+    final low = rows.where((x) => ((x['qty'] as num?) ?? 0) <= ((x['min_qty'] as num?) ?? 0)).length;
+    final font = await PdfGoogleFonts.notoSansDevanagariRegular(); final bold = await PdfGoogleFonts.notoSansDevanagariBold();
+    final doc = pw.Document(theme: pw.ThemeData.withFont(base: font, bold: bold));
+    doc.addPage(pw.MultiPage(pageFormat: PdfPageFormat.a4, margin: const pw.EdgeInsets.all(28), build: (_) => [
+      pw.Text('DokanMate - Stock Summary', style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
+      pw.Text(DateFormat('dd MMM yyyy').format(DateTime.now()), style: const pw.TextStyle(fontSize: 8)), pw.SizedBox(height: 12),
+      pw.Text('Products: ' + rows.length.toString() + '   Low Stock: ' + low.toString(), style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+      pw.Text('Stock @ Cost: ' + pdfMoney(totalCost) + '   Retail Value: ' + pdfMoney(totalRetail)), pw.SizedBox(height: 12),
+      pw.Table(border: pw.TableBorder.all(color: PdfColors.grey300), children: [
+        pw.TableRow(decoration: pw.BoxDecoration(color: PdfColors.grey100), children: ['Product','HSN','Unit','Qty','Buy','Stock Value','GST'].map((v) => pw.Padding(padding: const pw.EdgeInsets.all(5), child: pw.Text(v, style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold)))).toList()),
+        ...rows.map((x) { final q=((x['qty'] as num?)??0).toDouble(); final b=((x['buy'] as num?)??0).toDouble(); return pw.TableRow(children: [x['name'].toString(),x['hsn'].toString(),x['unit'].toString(),q.toStringAsFixed(2),pdfMoney(b),pdfMoney(q*b),(x['gst']??0).toString()+'%'].map((v)=>pw.Padding(padding:const pw.EdgeInsets.all(5),child:pw.Text(v,style:const pw.TextStyle(fontSize:7)))).toList()); }),
+      ]
+    ]));
+    final file=File(p.join((await exportFolder()).path,'DokanMate_Stock_Summary_'+stamp()+'.pdf'));
+    await file.writeAsBytes(await doc.save(),flush:true); await shareFile(file.path,'DokanMate Stock Summary');
+  } catch(e) { showMsg(context,'Stock PDF failed: '+e.toString()); }
+}
+
+Future<void> gstPdf(BuildContext context, Database db, DateTime month, String report) async {
+  try {
+    final start=DateTime(month.year,month.month,1); final end=DateTime(month.year,month.month+1,1); final f=DateFormat('yyyy-MM-dd HH:mm:ss');
+    final sales=await db.rawQuery('SELECT s.*, p.name party, p.gstin party_gstin, p.state party_state FROM sales s LEFT JOIN parties p ON p.id=s.party_id WHERE s.date>=? AND s.date<? ORDER BY s.date,s.id',[f.format(start),f.format(end)]);
+    final purchases=await db.rawQuery('SELECT * FROM purchases WHERE date>=? AND date<?',[f.format(start),f.format(end)]);
+    final items=await db.rawQuery('SELECT i.* FROM sale_items i JOIN sales s ON s.id=i.sale_id WHERE s.date>=? AND s.date<?',[f.format(start),f.format(end)]);
+    double n(Object? v)=>(v as num?)?.toDouble()??0;
+    final taxable=sales.fold<double>(0,(s,x)=>s+n(x['taxable'])); final cgst=sales.fold<double>(0,(s,x)=>s+n(x['cgst'])); final sgst=sales.fold<double>(0,(s,x)=>s+n(x['sgst'])); final igst=sales.fold<double>(0,(s,x)=>s+n(x['igst'])); final total=sales.fold<double>(0,(s,x)=>s+n(x['total']));
+    final pTax=purchases.fold<double>(0,(s,x)=>s+n(x['taxable'])); final pCgst=purchases.fold<double>(0,(s,x)=>s+n(x['cgst'])); final pSgst=purchases.fold<double>(0,(s,x)=>s+n(x['sgst'])); final pIgst=purchases.fold<double>(0,(s,x)=>s+n(x['igst']));
+    final grouped=<String,List<double>>{}; for(final i in items){final k=(i['hsn']??'').toString().isEmpty?'Unspecified HSN':i['hsn'].toString(); final a=grouped.putIfAbsent(k,()=>[0,0,0]); a[0]+=n(i['qty']); a[1]+=n(i['amount']); a[2]=n(i['gst']);}
+    final b2b=sales.where((x)=>(x['party_gstin']??'').toString().trim().isNotEmpty).length; final b2c=sales.length-b2b;
+    final font=await PdfGoogleFonts.notoSansDevanagariRegular(); final bold=await PdfGoogleFonts.notoSansDevanagariBold(); final doc=pw.Document(theme:pw.ThemeData.withFont(base:font,bold:bold));
+    doc.addPage(pw.MultiPage(pageFormat:PdfPageFormat.a4,margin:const pw.EdgeInsets.all(28),build:(_)=>[
+      pw.Text('DokanMate - '+report,style:pw.TextStyle(fontSize:20,fontWeight:pw.FontWeight.bold)), pw.Text(DateFormat('MMMM yyyy').format(month)), pw.SizedBox(height:12),
+      pw.Table(border:pw.TableBorder.all(color:PdfColors.grey300),children:[[ 'Outward Taxable',pdfMoney(taxable)],['Output CGST',pdfMoney(cgst)],['Output SGST',pdfMoney(sgst)],['Output IGST',pdfMoney(igst)],['Outward Total',pdfMoney(total)],['Purchase Taxable',pdfMoney(pTax)],['Input CGST',pdfMoney(pCgst)],['Input SGST',pdfMoney(pSgst)],['Input IGST',pdfMoney(pIgst)] ].map((r)=>pw.TableRow(children:r.map((v)=>pw.Padding(padding:const pw.EdgeInsets.all(6),child:pw.Text(v))).toList())).toList()),
+      if(report=='GSTR-1') ...[pw.SizedBox(height:14),pw.Text('GSTR-1 Outward Supplies',style:pw.TextStyle(fontSize:14,fontWeight:pw.FontWeight.bold)),pw.Text('B2B invoices: '+b2b.toString()+'    B2C invoices: '+b2c.toString()),pw.SizedBox(height:8),pw.Table(border:pw.TableBorder.all(color:PdfColors.grey300),children:[[ 'Invoice','Date','Customer','GSTIN','Taxable','CGST','SGST','IGST','Total' ],...sales.map((x)=>[x['invoice'].toString(),prettyDate(x['date']),x['party'].toString(),(x['party_gstin']??'').toString(),pdfMoney(n(x['taxable'])),pdfMoney(n(x['cgst'])),pdfMoney(n(x['sgst'])),pdfMoney(n(x['igst'])),pdfMoney(n(x['total']))])].map((r)=>pw.TableRow(children:r.map((v)=>pw.Padding(padding:const pw.EdgeInsets.all(4),child:pw.Text(v,style:const pw.TextStyle(fontSize:6)))).toList())).toList())],
+      if(report=='HSN'||report=='GSTR-1') ...[pw.SizedBox(height:14),pw.Text('HSN-wise Summary',style:pw.TextStyle(fontSize:14,fontWeight:pw.FontWeight.bold)),pw.Table(border:pw.TableBorder.all(color:PdfColors.grey300),children:[[ 'HSN','Qty','Amount','GST Rate' ],...grouped.entries.map((e)=>[e.key,e.value[0].toStringAsFixed(2),pdfMoney(e.value[1]),e.value[2].toStringAsFixed(2)+'%'])].map((r)=>pw.TableRow(children:r.map((v)=>pw.Padding(padding:const pw.EdgeInsets.all(5),child:pw.Text(v,style:const pw.TextStyle(fontSize:7)))).toList())).toList())],
+      pw.SizedBox(height:14),pw.Text('Preparation report only. Verify applicable fields before filing on the GST Portal.',style:const pw.TextStyle(fontSize:8))
+    ]));
+    final file=File(p.join((await exportFolder()).path,'DokanMate_'+report.replaceAll(' ','_')+'_'+stamp()+'.pdf')); await file.writeAsBytes(await doc.save(),flush:true); await shareFile(file.path,'DokanMate '+report+' report');
+  } catch(e){showMsg(context,'GST PDF failed: '+e.toString());}
+}
 Future<void> exportPdf(BuildContext context, Database db) async {
   try {
     final s = (await db.rawQuery('SELECT COALESCE(SUM(total),0) sales, COALESCE(SUM(taxable),0) taxable, COALESCE(SUM(paid),0) paid, COALESCE(SUM(due),0) due FROM sales')).first;
