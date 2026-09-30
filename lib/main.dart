@@ -1807,7 +1807,7 @@ Future<void> stockSummaryPdf(BuildContext context, Database db) async {
       pw.Table(border: pw.TableBorder.all(color: PdfColors.grey300), children: [
         pw.TableRow(decoration: pw.BoxDecoration(color: PdfColors.grey100), children: ['Product','HSN','Unit','Qty','Buy','Stock Value','GST'].map((v) => pw.Padding(padding: const pw.EdgeInsets.all(5), child: pw.Text(v, style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold)))).toList()),
         ...rows.map((x) { final q=((x['qty'] as num?)??0).toDouble(); final b=((x['buy'] as num?)??0).toDouble(); return pw.TableRow(children: [x['name'].toString(),x['hsn'].toString(),x['unit'].toString(),q.toStringAsFixed(2),pdfMoney(b),pdfMoney(q*b),(x['gst']??0).toString()+'%'].map((v)=>pw.Padding(padding:const pw.EdgeInsets.all(5),child:pw.Text(v,style:const pw.TextStyle(fontSize:7)))).toList()); }),
-      ]
+      ]),
     ]));
     final file=File(p.join((await exportFolder()).path,'DokanMate_Stock_Summary_'+stamp()+'.pdf'));
     await file.writeAsBytes(await doc.save(),flush:true); await shareFile(file.path,'DokanMate Stock Summary');
@@ -1836,6 +1836,82 @@ Future<void> gstPdf(BuildContext context, Database db, DateTime month, String re
     final file=File(p.join((await exportFolder()).path,'DokanMate_'+report.replaceAll(' ','_')+'_'+stamp()+'.pdf')); await file.writeAsBytes(await doc.save(),flush:true); await shareFile(file.path,'DokanMate '+report+' report');
   } catch(e){showMsg(context,'GST PDF failed: '+e.toString());}
 }
+Future<Directory> exportFolder() async {
+  final base = await getApplicationDocumentsDirectory();
+  final folder = Directory(p.join(base.path, 'DokanMate_Exports'));
+  if (!await folder.exists()) await folder.create(recursive: true);
+  return folder;
+}
+
+Future<void> shareFile(String path, String text) async {
+  await Share.shareXFiles([XFile(path)], text: text);
+}
+
+CellValue excelValue(Object? value) {
+  if (value == null) return TextCellValue('');
+  if (value is int) return IntCellValue(value);
+  if (value is num) return DoubleCellValue(value.toDouble());
+  return TextCellValue(value.toString());
+}
+
+Future<void> exportExcel(BuildContext context, Database db) async {
+  try {
+    final book = Excel.createExcel();
+    final tables = ['sales','purchases','parties','products','payments','expenses','stock_moves'];
+    for (final table in tables) {
+      final rows = await db.query(table);
+      final sheet = book[table];
+      if (rows.isEmpty) {
+        sheet.appendRow([TextCellValue('No data')]);
+        continue;
+      }
+      final keys = rows.first.keys.toList();
+      sheet.appendRow(keys.map((x) => TextCellValue(x)).toList());
+      for (final row in rows) {
+        sheet.appendRow(keys.map((key) => excelValue(row[key])).toList());
+      }
+    }
+    final bytes = book.save();
+    if (bytes == null) throw Exception('Excel creation failed');
+    final file = File(p.join((await exportFolder()).path, 'DokanMate_' + stamp() + '.xlsx'));
+    await file.writeAsBytes(bytes, flush: true);
+    await shareFile(file.path, 'DokanMate Excel export');
+    showMsg(context, 'Excel file created successfully.');
+  } catch (e) {
+    showMsg(context, 'Excel export failed: ' + e.toString());
+  }
+}
+
+Future<void> exportCsv(BuildContext context, Database db) async {
+  try {
+    final buffer = StringBuffer();
+    final tables = ['sales','purchases','parties','products','payments','expenses','stock_moves'];
+    for (final table in tables) {
+      final rows = await db.query(table);
+      buffer.writeln(table.toUpperCase());
+      if (rows.isEmpty) {
+        buffer.writeln('No data');
+        continue;
+      }
+      final keys = rows.first.keys.toList();
+      buffer.writeln(keys.join(','));
+      for (final row in rows) {
+        buffer.writeln(keys.map((key) {
+          final value = (row[key] ?? '').toString().replaceAll('"', '""');
+          return '"' + value + '"';
+        }).join(','));
+      }
+      buffer.writeln();
+    }
+    final file = File(p.join((await exportFolder()).path, 'DokanMate_' + stamp() + '.csv'));
+    await file.writeAsString(buffer.toString(), flush: true);
+    await shareFile(file.path, 'DokanMate CSV export');
+    showMsg(context, 'CSV file created successfully.');
+  } catch (e) {
+    showMsg(context, 'CSV export failed: ' + e.toString());
+  }
+}
+
 Future<void> exportPdf(BuildContext context, Database db) async {
   try {
     final s = (await db.rawQuery('SELECT COALESCE(SUM(total),0) sales, COALESCE(SUM(taxable),0) taxable, COALESCE(SUM(paid),0) paid, COALESCE(SUM(due),0) due FROM sales')).first;
