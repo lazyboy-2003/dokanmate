@@ -18,7 +18,6 @@ import 'package:local_auth/local_auth.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 import 'package:telephony/telephony.dart';
-import 'backup_service.dart';
 
 final ValueNotifier<String> appLanguage = ValueNotifier<String>('English');
 
@@ -94,7 +93,6 @@ Future<void> main() async {
   }
   runApp(DokanMate(db));
   Future<void>.delayed(const Duration(seconds: 1), () => syncSmsReminderAlarm(db));
-  Future<void>.delayed(const Duration(seconds: 3), () => DokanMateBackupService.maybeAutoBackup(db));
 }
 
 @pragma('vm:entry-point')
