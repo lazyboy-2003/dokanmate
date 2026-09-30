@@ -1836,24 +1836,6 @@ Future<void> showCustomerDetails(BuildContext context, Database db, Map<String, 
                 ),
               ),
             ),
-            const SizedBox(height: 10),
-            const Text('Message customer', style: TextStyle(fontWeight: FontWeight.w900)),
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                icon: const Icon(Icons.sms_rounded),
-                label: const Text('Send normal SMS reminder'),
-                onPressed: rating.currentDue <= 0.01
-                    ? null
-                    : () => _sendCustomerDueSms(context, db, party, rating),
-              ),
-            ),
-            if (rating.currentDue > 0.01)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text('Due reminder is pre-filled with the current outstanding amount.', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
-              ),
           ],
         ),
       ),
