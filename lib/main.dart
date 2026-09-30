@@ -9,30 +9,67 @@ import 'package:excel/excel.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:pdf/pdf.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:printing/printing.dart';
 
 final ValueNotifier<String> appLanguage = ValueNotifier<String>('English');
 
-String tr(String key) {
-  const bn = <String, String>{
-    'Home': 'হোম', 'Sales': 'বিক্রয়', 'Purchase': 'ক্রয়', 'Parties': 'পার্টি', 'More': 'আরও',
-    'Inventory': 'ইনভেন্টরি', 'Payments': 'পেমেন্ট', 'Expenses': 'খরচ', 'Reports & Export': 'রিপোর্ট ও এক্সপোর্ট',
-    'Business Profile': 'মার্চেন্ট প্রোফাইল', 'Merchant Profile': 'মার্চেন্ট প্রোফাইল', 'Language': 'ভাষা',
-    'Save': 'সেভ', 'Cancel': 'বাতিল', 'Business Overview': 'ব্যবসার সারাংশ', 'Total Sales': 'মোট বিক্রয়',
-    'Collection': 'আদায়', 'Profit': 'লাভ', 'Receivable': 'পাওনা', 'Payable': 'দেনা',
-    'Stock Value': 'স্টকের মূল্য', 'Business Expenses': 'ব্যবসার খরচ', 'Quick Actions': 'দ্রুত কাজ',
+const Map<String, Map<String, String>> _i18n = {
+  'English': {
+    'Home':'Home','Sales':'Sales','Purchase':'Purchase','Parties':'Parties','More':'More','Inventory':'Inventory','Payments':'Payments','Expenses':'Expenses','Reports & Export':'Reports & Export','Merchant Profile':'Merchant Profile','Language':'Language','Save':'Save','Cancel':'Cancel','Business Overview':'Business Overview','Total Sales':'Total Sales','Collection':'Collection','Profit':'Profit','Receivable':'Receivable','Payable':'Payable','Stock Value':'Stock Value','Business Expenses':'Business Expenses','Quick Actions':'Quick Actions','Customers':'Customers','Suppliers':'Suppliers','Add Product':'Add Product','Select Customer':'Select Customer','Select Supplier':'Select Supplier','Payment mode':'Payment mode','Grand Total':'Grand Total','Due':'Due','Subtotal':'Subtotal','Discount':'Discount','Taxable':'Taxable','GST':'GST','Paid amount':'Paid amount','New Sales Invoice':'New Sales Invoice','New Purchase Invoice':'New Purchase Invoice','Sales Invoice':'Sales Invoice','Purchase Invoice':'Purchase Invoice','Select Product':'Select Product','Add Customer':'Add Customer','Add Supplier':'Add Supplier','App Language':'App Language',
+  },
+  'हिन्दी': {
+    'Home':'होम','Sales':'बिक्री','Purchase':'खरीद','Parties':'पार्टियाँ','More':'और','Inventory':'इन्वेंटरी','Payments':'भुगतान','Expenses':'खर्च','Reports & Export':'रिपोर्ट और एक्सपोर्ट','Merchant Profile':'मर्चेंट प्रोफाइल','Language':'भाषा','Save':'सेव','Cancel':'रद्द करें','Business Overview':'बिजनेस ओवरव्यू','Total Sales':'कुल बिक्री','Collection':'कलेक्शन','Profit':'लाभ','Receivable':'लेना है','Payable':'देना है','Stock Value':'स्टॉक वैल्यू','Business Expenses':'बिजनेस खर्च','Quick Actions':'क्विक एक्शन','Customers':'ग्राहक','Suppliers':'सप्लायर','Add Product':'उत्पाद जोड़ें','Select Customer':'ग्राहक चुनें','Select Supplier':'सप्लायर चुनें','Payment mode':'भुगतान का तरीका','Grand Total':'कुल राशि','Due':'बकाया','Subtotal':'उप-योग','Discount':'छूट','Taxable':'कर योग्य','GST':'जीएसटी','Paid amount':'भुगतान राशि','New Sales Invoice':'नई बिक्री इनवॉइस','New Purchase Invoice':'नई खरीद इनवॉइस','Sales Invoice':'बिक्री इनवॉइस','Purchase Invoice':'खरीद इनवॉइस','Select Product':'उत्पाद चुनें','Add Customer':'ग्राहक जोड़ें','Add Supplier':'सप्लायर जोड़ें','App Language':'ऐप भाषा',
+  },
+  'বাংলা': {
+    'Home':'হোম','Sales':'বিক্রয়','Purchase':'ক্রয়','Parties':'পার্টি','More':'আরও','Inventory':'ইনভেন্টরি','Payments':'পেমেন্ট','Expenses':'খরচ','Reports & Export':'রিপোর্ট ও এক্সপোর্ট','Merchant Profile':'মার্চেন্ট প্রোফাইল','Language':'ভাষা','Save':'সেভ','Cancel':'বাতিল','Business Overview':'ব্যবসার সারাংশ','Total Sales':'মোট বিক্রয়','Collection':'আদায়','Profit':'লাভ','Receivable':'পাওনা','Payable':'দেনা','Stock Value':'স্টকের মূল্য','Business Expenses':'ব্যবসার খরচ','Quick Actions':'দ্রুত কাজ','Customers':'গ্রাহক','Suppliers':'সরবরাহকারী','Add Product':'পণ্য যোগ করুন','Select Customer':'গ্রাহক নির্বাচন করুন','Select Supplier':'সরবরাহকারী নির্বাচন করুন','Payment mode':'পেমেন্টের মাধ্যম','Grand Total':'সর্বমোট','Due':'বাকি','Subtotal':'সাবটোটাল','Discount':'ছাড়','Taxable':'করযোগ্য','GST':'GST','Paid amount':'পরিশোধিত টাকা','New Sales Invoice':'নতুন বিক্রয় ইনভয়েস','New Purchase Invoice':'নতুন ক্রয় ইনভয়েস','Sales Invoice':'বিক্রয় ইনভয়েস','Purchase Invoice':'ক্রয় ইনভয়েস','Select Product':'পণ্য নির্বাচন করুন','Add Customer':'গ্রাহক যোগ করুন','Add Supplier':'সরবরাহকারী যোগ করুন','App Language':'অ্যাপের ভাষা',
+  },
+  'मराठी': {
+    'Home':'मुख्यपृष्ठ','Sales':'विक्री','Purchase':'खरेदी','Parties':'पक्ष','More':'अधिक','Inventory':'साठा','Payments':'देयके','Expenses':'खर्च','Reports & Export':'अहवाल व एक्सपोर्ट','Merchant Profile':'व्यापारी प्रोफाइल','Language':'भाषा','Save':'जतन करा','Cancel':'रद्द करा','Business Overview':'व्यवसायाचा आढावा','Total Sales':'एकूण विक्री','Collection':'वसुली','Profit':'नफा','Receivable':'येणे','Payable':'देणे','Stock Value':'साठ्याची किंमत','Business Expenses':'व्यवसाय खर्च','Quick Actions':'जलद कृती','Customers':'ग्राहक','Suppliers':'पुरवठादार','Add Product':'उत्पादन जोडा','Select Customer':'ग्राहक निवडा','Select Supplier':'पुरवठादार निवडा','Payment mode':'पेमेंट पद्धत','Grand Total':'एकूण रक्कम','Due':'बाकी','Subtotal':'उपएकूण','Discount':'सूट','Taxable':'करपात्र','GST':'जीएसटी','Paid amount':'भरलेली रक्कम','New Sales Invoice':'नवीन विक्री चलन','New Purchase Invoice':'नवीन खरेदी चलन','Sales Invoice':'विक्री चलन','Purchase Invoice':'खरेदी चलन','Select Product':'उत्पादन निवडा','Add Customer':'ग्राहक जोडा','Add Supplier':'पुरवठादार जोडा','App Language':'अॅप भाषा',
+  },
+  'తెలుగు': {
+    'Home':'హోమ్','Sales':'అమ్మకాలు','Purchase':'కొనుగోలు','Parties':'పార్టీలు','More':'మరిన్ని','Inventory':'నిల్వ','Payments':'చెల్లింపులు','Expenses':'ఖర్చులు','Reports & Export':'నివేదికలు & ఎగుమతి','Merchant Profile':'వ్యాపారి ప్రొఫైల్','Language':'భాష','Save':'సేవ్','Cancel':'రద్దు','Business Overview':'వ్యాపార అవలోకనం','Total Sales':'మొత్తం అమ్మకాలు','Collection':'వసూళ్లు','Profit':'లాభం','Receivable':'రావాల్సింది','Payable':'చెల్లించాల్సింది','Stock Value':'స్టాక్ విలువ','Business Expenses':'వ్యాపార ఖర్చులు','Quick Actions':'త్వరిత చర్యలు','Customers':'కస్టమర్లు','Suppliers':'సరఫరాదారులు','Add Product':'ఉత్పత్తి జోడించండి','Select Customer':'కస్టమర్ ఎంచుకోండి','Select Supplier':'సరఫరాదారు ఎంచుకోండి','Payment mode':'చెల్లింపు విధానం','Grand Total':'మొత్తం','Due':'బకాయి','Subtotal':'ఉపమొత్తం','Discount':'తగ్గింపు','Taxable':'పన్ను విధించదగినది','GST':'జీఎస్టీ','Paid amount':'చెల్లించిన మొత్తం','New Sales Invoice':'కొత్త అమ్మకాల ఇన్వాయిస్','New Purchase Invoice':'కొత్త కొనుగోలు ఇన్వాయిస్','Sales Invoice':'అమ్మకాల ఇన్వాయిస్','Purchase Invoice':'కొనుగోలు ఇన్వాయిస్','Select Product':'ఉత్పత్తిని ఎంచుకోండి','Add Customer':'కస్టమర్‌ను జోడించండి','Add Supplier':'సరఫరాదారుని జోడించండి','App Language':'యాప్ భాష',
+  },
+  'தமிழ்': {
+    'Home':'முகப்பு','Sales':'விற்பனை','Purchase':'கொள்முதல்','Parties':'தரப்புகள்','More':'மேலும்','Inventory':'சரக்கு','Payments':'கொடுப்பனவுகள்','Expenses':'செலவுகள்','Reports & Export':'அறிக்கைகள் & ஏற்றுமதி','Merchant Profile':'வணிகர் சுயவிவரம்','Language':'மொழி','Save':'சேமி','Cancel':'ரத்து','Business Overview':'வணிக சுருக்கம்','Total Sales':'மொத்த விற்பனை','Collection':'வசூல்','Profit':'லாபம்','Receivable':'பெற வேண்டியது','Payable':'செலுத்த வேண்டியது','Stock Value':'சரக்கு மதிப்பு','Business Expenses':'வணிக செலவுகள்','Quick Actions':'விரைவு செயல்கள்','Customers':'வாடிக்கையாளர்கள்','Suppliers':'சப்ளையர்கள்','Add Product':'பொருள் சேர்','Select Customer':'வாடிக்கையாளரைத் தேர்வு செய்','Select Supplier':'சப்ளையரைத் தேர்வு செய்','Payment mode':'கட்டண முறை','Grand Total':'மொத்தம்','Due':'நிலுவை','Subtotal':'கூட்டுத்தொகை','Discount':'தள்ளுபடி','Taxable':'வரி விதிக்கத்தக்கது','GST':'ஜிஎஸ்டி','Paid amount':'செலுத்திய தொகை','New Sales Invoice':'புதிய விற்பனை இன்வாய்ஸ்','New Purchase Invoice':'புதிய கொள்முதல் இன்வாய்ஸ்','Sales Invoice':'விற்பனை இன்வாய்ஸ்','Purchase Invoice':'கொள்முதல் இன்வாய்ஸ்','Select Product':'பொருளைத் தேர்வு செய்','Add Customer':'வாடிக்கையாளரைச் சேர்','Add Supplier':'சப்ளையரைச் சேர்','App Language':'ஆப் மொழி',
+  },
+  'ગુજરાતી': {
+    'Home':'હોમ','Sales':'વેચાણ','Purchase':'ખરીદી','Parties':'પાર્ટીઓ','More':'વધુ','Inventory':'ઇન્વેન્ટરી','Payments':'ચુકવણીઓ','Expenses':'ખર્ચ','Reports & Export':'રિપોર્ટ અને એક્સપોર્ટ','Merchant Profile':'મર્ચન્ટ પ્રોફાઇલ','Language':'ભાષા','Save':'સાચવો','Cancel':'રદ કરો','Business Overview':'બિઝનેસ ઓવરવ્યૂ','Total Sales':'કુલ વેચાણ','Collection':'વસૂલાત','Profit':'નફો','Receivable':'લેવાનું','Payable':'ચૂકવવાનું','Stock Value':'સ્ટોક મૂલ્ય','Business Expenses':'વ્યવસાય ખર્ચ','Quick Actions':'ઝડપી કાર્યો','Customers':'ગ્રાહકો','Suppliers':'સપ્લાયર્સ','Add Product':'પ્રોડક્ટ ઉમેરો','Select Customer':'ગ્રાહક પસંદ કરો','Select Supplier':'સપ્લાયર પસંદ કરો','Payment mode':'ચુકવણી પદ્ધતિ','Grand Total':'કુલ રકમ','Due':'બાકી','Subtotal':'પેટા કુલ','Discount':'ડિસ્કાઉન્ટ','Taxable':'કરપાત્ર','GST':'GST','Paid amount':'ચૂકવેલ રકમ','New Sales Invoice':'નવી વેચાણ ઇન્વોઇસ','New Purchase Invoice':'નવી ખરીદી ઇન્વોઇસ','Sales Invoice':'વેચાણ ઇન્વોઇસ','Purchase Invoice':'ખરીદી ઇન્વોઇસ','Select Product':'પ્રોડક્ટ પસંદ કરો','Add Customer':'ગ્રાહક ઉમેરો','Add Supplier':'સપ્લાયર ઉમેરો','App Language':'ઍપ ભાષા',
+  },
+  'اردو': {
+    'Home':'ہوم','Sales':'فروخت','Purchase':'خریداری','Parties':'پارٹیاں','More':'مزید','Inventory':'انوینٹری','Payments':'ادائیگیاں','Expenses':'اخراجات','Reports & Export':'رپورٹس اور ایکسپورٹ','Merchant Profile':'مرچنٹ پروفائل','Language':'زبان','Save':'محفوظ کریں','Cancel':'منسوخ','Business Overview':'کاروباری جائزہ','Total Sales':'کل فروخت','Collection':'وصولی','Profit':'منافع','Receivable':'وصول طلب','Payable':'قابل ادائیگی','Stock Value':'اسٹاک کی قدر','Business Expenses':'کاروباری اخراجات','Quick Actions':'فوری کارروائیاں','Customers':'گاہک','Suppliers':'سپلائرز','Add Product':'پروڈکٹ شامل کریں','Select Customer':'گاہک منتخب کریں','Select Supplier':'سپلائر منتخب کریں','Payment mode':'ادائیگی کا طریقہ','Grand Total':'کل رقم','Due':'بقایا','Subtotal':'ذیلی کل','Discount':'رعایت','Taxable':'قابل ٹیکس','GST':'جی ایس ٹی','Paid amount':'ادا شدہ رقم','New Sales Invoice':'نیا فروخت انوائس','New Purchase Invoice':'نیا خریداری انوائس','Sales Invoice':'فروخت انوائس','Purchase Invoice':'خریداری انوائس','Select Product':'پروڈکٹ منتخب کریں','Add Customer':'گاہک شامل کریں','Add Supplier':'سپلائر شامل کریں','App Language':'ایپ کی زبان',
+  },
+  'ಕನ್ನಡ': {
+    'Home':'ಮುಖಪುಟ','Sales':'ಮಾರಾಟ','Purchase':'ಖರೀದಿ','Parties':'ಪಕ್ಷಗಳು','More':'ಇನ್ನಷ್ಟು','Inventory':'ದಾಸ್ತಾನು','Payments':'ಪಾವತಿಗಳು','Expenses':'ವೆಚ್ಚಗಳು','Reports & Export':'ವರದಿಗಳು ಮತ್ತು ಎಕ್ಸ್‌ಪೋರ್ಟ್','Merchant Profile':'ವ್ಯಾಪಾರಿ ಪ್ರೊಫೈಲ್','Language':'ಭಾಷೆ','Save':'ಉಳಿಸಿ','Cancel':'ರದ್ದು','Business Overview':'ವ್ಯವಹಾರ ಅವಲೋಕನ','Total Sales':'ಒಟ್ಟು ಮಾರಾಟ','Collection':'ವಸೂಲಿ','Profit':'ಲಾಭ','Receivable':'ಬರಬೇಕಾದದ್ದು','Payable':'ಕೊಡಬೇಕಾದದ್ದು','Stock Value':'ಸ್ಟಾಕ್ ಮೌಲ್ಯ','Business Expenses':'ವ್ಯವಹಾರ ವೆಚ್ಚಗಳು','Quick Actions':'ತ್ವರಿತ ಕಾರ್ಯಗಳು','Customers':'ಗ್ರಾಹಕರು','Suppliers':'ಪೂರೈಕೆದಾರರು','Add Product':'ಉತ್ಪನ್ನ ಸೇರಿಸಿ','Select Customer':'ಗ್ರಾಹಕರನ್ನು ಆಯ್ಕೆಮಾಡಿ','Select Supplier':'ಪೂರೈಕೆದಾರರನ್ನು ಆಯ್ಕೆಮಾಡಿ','Payment mode':'ಪಾವತಿ ವಿಧಾನ','Grand Total':'ಒಟ್ಟು ಮೊತ್ತ','Due':'ಬಾಕಿ','Subtotal':'ಉಪಮೊತ್ತ','Discount':'ರಿಯಾಯಿತಿ','Taxable':'ತೆರಿಗೆಗೆ ಒಳಪಡುವ','GST':'ಜಿಎಸ್‌ಟಿ','Paid amount':'ಪಾವತಿಸಿದ ಮೊತ್ತ','New Sales Invoice':'ಹೊಸ ಮಾರಾಟ ಇನ್ವಾಯ್ಸ್','New Purchase Invoice':'ಹೊಸ ಖರೀದಿ ಇನ್ವಾಯ್ಸ್','Sales Invoice':'ಮಾರಾಟ ಇನ್ವಾಯ್ಸ್','Purchase Invoice':'ಖರೀದಿ ಇನ್ವಾಯ್ಸ್','Select Product':'ಉತ್ಪನ್ನ ಆಯ್ಕೆಮಾಡಿ','Add Customer':'ಗ್ರಾಹಕರನ್ನು ಸೇರಿಸಿ','Add Supplier':'ಪೂರೈಕೆದಾರರನ್ನು ಸೇರಿಸಿ','App Language':'ಆಪ್ ಭಾಷೆ',
+  },
+  'ଓଡ଼ିଆ': {
+    'Home':'ମୁଖ୍ୟ ପୃଷ୍ଠା','Sales':'ବିକ୍ରୟ','Purchase':'କ୍ରୟ','Parties':'ପକ୍ଷଗୁଡ଼ିକ','More':'ଅଧିକ','Inventory':'ମଜୁତ','Payments':'ପେମେଣ୍ଟ','Expenses':'ଖର୍ଚ୍ଚ','Reports & Export':'ରିପୋର୍ଟ ଓ ଏକ୍ସପୋର୍ଟ','Merchant Profile':'ବ୍ୟବସାୟୀ ପ୍ରୋଫାଇଲ୍','Language':'ଭାଷା','Save':'ସଞ୍ଚୟ','Cancel':'ବାତିଲ','Business Overview':'ବ୍ୟବସାୟ ସାରାଂଶ','Total Sales':'ମୋଟ ବିକ୍ରୟ','Collection':'ଆଦାୟ','Profit':'ଲାଭ','Receivable':'ପାଇବାକୁ ଅଛି','Payable':'ଦେବାକୁ ଅଛି','Stock Value':'ଷ୍ଟକ୍ ମୂଲ୍ୟ','Business Expenses':'ବ୍ୟବସାୟ ଖର୍ଚ୍ଚ','Quick Actions':'ଦ୍ରୁତ କାର୍ଯ୍ୟ','Customers':'ଗ୍ରାହକ','Suppliers':'ଯୋଗାଣକାରୀ','Add Product':'ଉତ୍ପାଦ ଯୋଡ଼ନ୍ତୁ','Select Customer':'ଗ୍ରାହକ ବାଛନ୍ତୁ','Select Supplier':'ଯୋଗାଣକାରୀ ବାଛନ୍ତୁ','Payment mode':'ପେମେଣ୍ଟ ପ୍ରକାର','Grand Total':'ମୋଟ ରାଶି','Due':'ବାକି','Subtotal':'ଉପମୋଟ','Discount':'ଛାଡ଼','Taxable':'କରଯୋଗ୍ୟ','GST':'ଜିଏସଟି','Paid amount':'ଦିଆଯାଇଥିବା ରାଶି','New Sales Invoice':'ନୂଆ ବିକ୍ରୟ ଇନଭଏସ୍','New Purchase Invoice':'ନୂଆ କ୍ରୟ ଇନଭଏସ୍','Sales Invoice':'ବିକ୍ରୟ ଇନଭଏସ୍','Purchase Invoice':'କ୍ରୟ ଇନଭଏସ୍','Select Product':'ଉତ୍ପାଦ ବାଛନ୍ତୁ','Add Customer':'ଗ୍ରାହକ ଯୋଡ଼ନ୍ତୁ','Add Supplier':'ଯୋଗାଣକାରୀ ଯୋଡ଼ନ୍ତୁ','App Language':'ଆପ୍ ଭାଷା',
+  },
+  'മലയാളം': {
+    'Home':'ഹോം','Sales':'വിൽപ്പന','Purchase':'വാങ്ങൽ','Parties':'പാർട്ടികൾ','More':'കൂടുതൽ','Inventory':'ഇൻവെന്ററി','Payments':'പേയ്മെന്റുകൾ','Expenses':'ചെലവുകൾ','Reports & Export':'റിപ്പോർട്ടുകളും എക്സ്പോർട്ടും','Merchant Profile':'മർച്ചന്റ് പ്രൊഫൈൽ','Language':'ഭാഷ','Save':'സേവ്','Cancel':'റദ്ദാക്കുക','Business Overview':'ബിസിനസ് അവലോകനം','Total Sales':'ആകെ വിൽപ്പന','Collection':'പിരിവ്','Profit':'ലാഭം','Receivable':'ലഭിക്കാനുള്ളത്','Payable':'നൽകാനുള്ളത്','Stock Value':'സ്റ്റോക്ക് മൂല്യം','Business Expenses':'ബിസിനസ് ചെലവുകൾ','Quick Actions':'ദ്രുത പ്രവർത്തനങ്ങൾ','Customers':'ഉപഭോക്താക്കൾ','Suppliers':'വിതരണക്കാർ','Add Product':'ഉൽപ്പന്നം ചേർക്കുക','Select Customer':'ഉപഭോക്താവിനെ തിരഞ്ഞെടുക്കുക','Select Supplier':'വിതരണക്കാരനെ തിരഞ്ഞെടുക്കുക','Payment mode':'പേയ്മെന്റ് രീതി','Grand Total':'ആകെ തുക','Due':'ബാക്കി','Subtotal':'ഉപമൊത്തം','Discount':'ഇളവ്','Taxable':'നികുതി ബാധകം','GST':'ജിഎസ്ടി','Paid amount':'അടച്ച തുക','New Sales Invoice':'പുതിയ വിൽപ്പന ഇൻവോയ്സ്','New Purchase Invoice':'പുതിയ വാങ്ങൽ ഇൻവോയ്സ്','Sales Invoice':'വിൽപ്പന ഇൻവോയ്സ്','Purchase Invoice':'വാങ്ങൽ ഇൻവോയ്സ്','Select Product':'ഉൽപ്പന്നം തിരഞ്ഞെടുക്കുക','Add Customer':'ഉപഭോക്താവിനെ ചേർക്കുക','Add Supplier':'വിതരണക്കാരനെ ചേർക്കുക','App Language':'ആപ്പ് ഭാഷ',
+  },
+  'ਪੰਜਾਬੀ': {
+    'Home':'ਹੋਮ','Sales':'ਵਿਕਰੀ','Purchase':'ਖਰੀਦ','Parties':'ਪਾਰਟੀਆਂ','More':'ਹੋਰ','Inventory':'ਸਟਾਕ','Payments':'ਭੁਗਤਾਨ','Expenses':'ਖਰਚੇ','Reports & Export':'ਰਿਪੋਰਟਾਂ ਅਤੇ ਐਕਸਪੋਰਟ','Merchant Profile':'ਵਪਾਰੀ ਪ੍ਰੋਫਾਈਲ','Language':'ਭਾਸ਼ਾ','Save':'ਸੇਵ','Cancel':'ਰੱਦ ਕਰੋ','Business Overview':'ਕਾਰੋਬਾਰੀ ਝਲਕ','Total Sales':'ਕੁੱਲ ਵਿਕਰੀ','Collection':'ਵਸੂਲੀ','Profit':'ਮੁਨਾਫਾ','Receivable':'ਲੈਣਾ ਹੈ','Payable':'ਦੇਣਾ ਹੈ','Stock Value':'ਸਟਾਕ ਮੁੱਲ','Business Expenses':'ਕਾਰੋਬਾਰੀ ਖਰਚੇ','Quick Actions':'ਤੁਰੰਤ ਕਾਰਵਾਈਆਂ','Customers':'ਗਾਹਕ','Suppliers':'ਸਪਲਾਇਰ','Add Product':'ਉਤਪਾਦ ਜੋੜੋ','Select Customer':'ਗਾਹਕ ਚੁਣੋ','Select Supplier':'ਸਪਲਾਇਰ ਚੁਣੋ','Payment mode':'ਭੁਗਤਾਨ ਢੰਗ','Grand Total':'ਕੁੱਲ ਰਕਮ','Due':'ਬਕਾਇਆ','Subtotal':'ਉਪ-ਜੋੜ','Discount':'ਛੂਟ','Taxable':'ਟੈਕਸਯੋਗ','GST':'ਜੀਐਸਟੀ','Paid amount':'ਅਦਾ ਕੀਤੀ ਰਕਮ','New Sales Invoice':'ਨਵੀਂ ਵਿਕਰੀ ਇਨਵੌਇਸ','New Purchase Invoice':'ਨਵੀਂ ਖਰੀਦ ਇਨਵੌਇਸ','Sales Invoice':'ਵਿਕਰੀ ਇਨਵੌਇਸ','Purchase Invoice':'ਖਰੀਦ ਇਨਵੌਇਸ','Select Product':'ਉਤਪਾਦ ਚੁਣੋ','Add Customer':'ਗਾਹਕ ਜੋੜੋ','Add Supplier':'ਸਪਲਾਇਰ ਜੋੜੋ','App Language':'ਐਪ ਭਾਸ਼ਾ',
+  },
+  'অসমীয়া': {
+    'Home':'হোম','Sales':'বিক্ৰী','Purchase':'ক্ৰয়','Parties':'পক্ষসমূহ','More':'অধিক','Inventory':'মজুত','Payments':'পেমেণ্ট','Expenses':'খৰচ','Reports & Export':'ৰিপ’ৰ্ট আৰু এক্সপ’ৰ্ট','Merchant Profile':'ব্যৱসায়ী প্ৰফাইল','Language':'ভাষা','Save':'সংৰক্ষণ','Cancel':'বাতিল','Business Overview':'ব্যৱসায়ৰ সাৰাংশ','Total Sales':'মুঠ বিক্ৰী','Collection':'আদায়','Profit':'লাভ','Receivable':'পাবলগীয়া','Payable':'দিবলগীয়া','Stock Value':'ষ্টকৰ মূল্য','Business Expenses':'ব্যৱসায়িক খৰচ','Quick Actions':'দ্ৰুত কাৰ্য','Customers':'গ্ৰাহক','Suppliers':'যোগানদাতা','Add Product':'পণ্য যোগ কৰক','Select Customer':'গ্ৰাহক বাছক','Select Supplier':'যোগানদাতা বাছক','Payment mode':'পেমেণ্ট পদ্ধতি','Grand Total':'মুঠ','Due':'বাকী','Subtotal':'উপমুঠ','Discount':'ৰেহাই','Taxable':'কৰযোগ্য','GST':'জিএছটি','Paid amount':'পৰিশোধ কৰা ধন','New Sales Invoice':'নতুন বিক্ৰী ইনভইচ','New Purchase Invoice':'নতুন ক্ৰয় ইনভইচ','Sales Invoice':'বিক্ৰী ইনভইচ','Purchase Invoice':'ক্ৰয় ইনভইচ','Select Product':'পণ্য বাছক','Add Customer':'গ্ৰাহক যোগ কৰক','Add Supplier':'যোগানদাতা যোগ কৰক','App Language':'এপৰ ভাষা',
+  },
+};
+
+String tr(String key) => _i18n[appLanguage.value]?[key] ?? _i18n['English']![key] ?? key;
+
+String localeCode(String language) {
+  const codes = {
+    'English':'en','हिन्दी':'hi','বাংলা':'bn','मराठी':'mr','తెలుగు':'te','தமிழ்':'ta',
+    'ગુજરાતી':'gu','اردو':'ur','ಕನ್ನಡ':'kn','ଓଡ଼ିଆ':'or','മലയാളം':'ml','ਪੰਜਾਬੀ':'pa','অসমীয়া':'as',
   };
-  const hi = <String, String>{
-    'Home': 'होम', 'Sales': 'बिक्री', 'Purchase': 'खरीद', 'Parties': 'पार्टी', 'More': 'और',
-    'Inventory': 'इन्वेंटरी', 'Payments': 'भुगतान', 'Expenses': 'खर्च', 'Reports & Export': 'रिपोर्ट और एक्सपोर्ट',
-    'Business Profile': 'मर्चेंट प्रोफाइल', 'Merchant Profile': 'मर्चेंट प्रोफाइल', 'Language': 'भाषा',
-    'Save': 'सेव', 'Cancel': 'रद्द करें', 'Business Overview': 'बिजनेस ओवरव्यू', 'Total Sales': 'कुल बिक्री',
-    'Collection': 'कलेक्शन', 'Profit': 'लाभ', 'Receivable': 'लेना है', 'Payable': 'देना है',
-    'Stock Value': 'स्टॉक वैल्यू', 'Business Expenses': 'बिजनेस खर्च', 'Quick Actions': 'क्विक एक्शन',
-  };
-  if (appLanguage.value == 'বাংলা') return bn[key] ?? key;
-  if (appLanguage.value == 'हिन्दी') return hi[key] ?? key;
-  return key;
+  return codes[language] ?? 'en';
 }
+
+List<Locale> get supportedIndianLocales => const [
+  Locale('en'), Locale('hi'), Locale('bn'), Locale('mr'), Locale('te'), Locale('ta'),
+  Locale('gu'), Locale('ur'), Locale('kn'), Locale('or'), Locale('ml'), Locale('pa'), Locale('as'),
+];
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -94,7 +131,7 @@ Future<void> ensureDb(Database db) async {
   }
 }
 
-String money(num n) => 'Rs ' + n.toStringAsFixed(2);
+String money(num n) => '₹' + n.toStringAsFixed(2);
 String stamp() => DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
 String today() => DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
 String prettyDate(Object? value) {
@@ -116,6 +153,15 @@ class DokanMate extends StatefulWidget {
 class _DokanMateState extends State<DokanMate> {
   int tab = 0;
   int refreshKey = 0;
+  bool intro = true;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.delayed(const Duration(milliseconds: 2200), () {
+      if (mounted) setState(() => intro = false);
+    });
+  }
 
   void refresh() {
     setState(() {
@@ -128,6 +174,9 @@ class _DokanMateState extends State<DokanMate> {
     return ValueListenableBuilder<String>(
       valueListenable: appLanguage,
       builder: (context, lang, _) {
+        if (intro) {
+          return const MaterialApp(debugShowCheckedModeBanner: false, home: IntroPage());
+        }
         final pages = <Widget>[
       HomePage(widget.db, key: ValueKey('home$refreshKey')),
       SalesPage(widget.db, refresh, key: ValueKey('sales$refreshKey')),
@@ -139,6 +188,9 @@ class _DokanMateState extends State<DokanMate> {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'DokanMate',
+      locale: Locale(localeCode(lang)),
+      localizationsDelegates: GlobalMaterialLocalizations.delegates,
+      supportedLocales: supportedIndianLocales,
       theme: ThemeData(
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFFF6F7FB),
@@ -182,6 +234,69 @@ class _DokanMateState extends State<DokanMate> {
   }
 }
 
+
+class IntroPage extends StatefulWidget {
+  const IntroPage({super.key});
+  @override
+  State<IntroPage> createState() => _IntroPageState();
+}
+
+class _IntroPageState extends State<IntroPage> with SingleTickerProviderStateMixin {
+  late final AnimationController controller;
+  @override
+  void initState() {
+    super.initState();
+    controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 1600))..forward();
+  }
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF312E81), Color(0xFF6366F1), Color(0xFF8B5CF6)]),
+        ),
+        child: Center(
+          child: AnimatedBuilder(
+            animation: controller,
+            builder: (_, __) {
+              final eased = Curves.easeOutBack.transform(controller.value);
+              return Opacity(
+                opacity: controller.value.clamp(0.0, 1.0),
+                child: Transform.scale(
+                  scale: 0.72 + (0.28 * eased),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 92, height: 92,
+                        decoration: BoxDecoration(color: Colors.white.withOpacity(.16), shape: BoxShape.circle),
+                        child: const Icon(Icons.storefront_rounded, size: 48, color: Colors.white),
+                      ),
+                      const SizedBox(height: 22),
+                      const Text('DokanMate', style: TextStyle(color: Colors.white, fontSize: 34, fontWeight: FontWeight.w900, letterSpacing: .5)),
+                      const SizedBox(height: 10),
+                      const Text('Made with love ❤️', style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 5),
+                      const Text('Only for you', style: TextStyle(color: Color(0xFFE0E7FF), fontSize: 14)),
+                      const SizedBox(height: 34),
+                      const SizedBox(width: 28, height: 28, child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white)),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 Widget header(String title, String subtitle, {List<Widget> actions = const []}) {
   return Padding(
     padding: const EdgeInsets.fromLTRB(18, 18, 18, 10),
@@ -203,8 +318,13 @@ Widget header(String title, String subtitle, {List<Widget> actions = const []}) 
 }
 
 Widget statCard(String title, String value, IconData icon) {
-  return Container(
-    padding: const EdgeInsets.all(15),
+  return TweenAnimationBuilder<double>(
+    tween: Tween(begin: .94, end: 1),
+    duration: const Duration(milliseconds: 500),
+    curve: Curves.easeOutBack,
+    builder: (context, scale, child) => Transform.scale(scale: scale, child: child),
+    child: Container(
+      padding: const EdgeInsets.all(15),
     decoration: BoxDecoration(
       color: Colors.white,
       borderRadius: BorderRadius.circular(20),
@@ -590,7 +710,7 @@ class _InvoicePageState extends State<InvoicePage> {
   Future<void> load() async {
     final pRows = await widget.db.query(
       'parties',
-      where: "type=? OR type='both'",
+      where: "LOWER(type)=LOWER(?) OR LOWER(type)='both'",
       whereArgs: [widget.purchase ? 'supplier' : 'customer'],
       orderBy: 'name',
     );
@@ -607,7 +727,7 @@ class _InvoicePageState extends State<InvoicePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.purchase ? 'New Purchase Invoice' : 'New Sales Invoice', style: const TextStyle(fontWeight: FontWeight.w900)),
+        title: Text(tr(widget.purchase ? 'New Purchase Invoice' : 'New Sales Invoice'), style: const TextStyle(fontWeight: FontWeight.w900)),
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(18, 8, 18, 30),
@@ -632,7 +752,7 @@ class _InvoicePageState extends State<InvoicePage> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    widget.purchase ? 'Purchase Invoice' : 'Sales Invoice',
+                    tr(widget.purchase ? 'Purchase Invoice' : 'Sales Invoice'),
                     style: const TextStyle(color: Colors.white, fontSize: 21, fontWeight: FontWeight.w900),
                   ),
                 ),
@@ -640,7 +760,7 @@ class _InvoicePageState extends State<InvoicePage> {
             ),
           ),
           const SizedBox(height: 16),
-          _label(widget.purchase ? 'SUPPLIER / CREDITOR' : 'CUSTOMER'),
+          _label(widget.purchase ? tr('Select Supplier') : tr('Select Customer')),
           Row(children: [
             Expanded(child: OutlinedButton.icon(
               onPressed: () async {
@@ -648,7 +768,7 @@ class _InvoicePageState extends State<InvoicePage> {
                 if (picked != null && mounted) setState(() => partyId = picked);
               },
               icon: const Icon(Icons.person_search_rounded),
-              label: Text(partyId == null ? (widget.purchase ? 'Select / Search Supplier' : 'Select / Search Customer') : (parties.firstWhere((p) => p['id'] == partyId, orElse: () => {'name': 'Selected Party'})['name']?.toString() ?? 'Selected Party')),
+              label: Text(partyId == null ? tr(widget.purchase ? 'Select Supplier' : 'Select Customer') : (parties.firstWhere((p) => p['id'] == partyId, orElse: () => {'name': 'Selected Party'})['name']?.toString() ?? 'Selected Party')),
               style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(52), alignment: Alignment.centerLeft, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
             )),
             const SizedBox(width: 8),
@@ -660,10 +780,25 @@ class _InvoicePageState extends State<InvoicePage> {
           ]),
           const SizedBox(height: 18),
           _label('ITEMS'),
-          FilledButton.tonalIcon(
-            onPressed: products.isEmpty ? () => productDialog(context, widget.db, onSaved: load) : selectProduct,
-            icon: const Icon(Icons.add),
-            label: Text(products.isEmpty ? 'Add Product First' : 'Add Product'),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.tonalIcon(
+                  onPressed: products.isEmpty ? () => productDialog(context, widget.db, onSaved: load) : selectProduct,
+                  icon: const Icon(Icons.add_shopping_cart_rounded),
+                  label: Text(products.isEmpty ? 'Add Product First' : tr('Add Product')),
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton.filled(
+                tooltip: 'Create new product',
+                onPressed: () async {
+                  await productDialog(context, widget.db, onSaved: load);
+                  await load();
+                },
+                icon: const Icon(Icons.add_box_rounded),
+              ),
+            ],
           ),
           const SizedBox(height: 10),
           if (lines.isEmpty) emptyState('No items', 'Add product, quantity, rate, discount and GST.'),
@@ -673,13 +808,13 @@ class _InvoicePageState extends State<InvoicePage> {
           TextField(
             controller: paid,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: const InputDecoration(labelText: 'Paid amount'),
+            decoration: InputDecoration(labelText: tr('Paid amount')),
             onChanged: (_) => setState(() {}),
           ),
           const SizedBox(height: 8),
           DropdownButtonFormField<String>(
             value: mode.isEmpty ? null : mode,
-            decoration: const InputDecoration(labelText: 'Payment mode *', hintText: 'Select payment mode', prefixIcon: Icon(Icons.payments_rounded)),
+            decoration: InputDecoration(labelText: '${tr('Payment mode')} *', hintText: tr('Payment mode'), prefixIcon: const Icon(Icons.payments_rounded)),
             items: ['Cash', 'UPI', 'Bank', 'Card', 'Cheque', 'Credit'].map((x) => DropdownMenuItem(value: x, child: Text(x))).toList(),
             onChanged: (value) => setState(() => mode = value ?? ''),
           ),
@@ -689,13 +824,13 @@ class _InvoicePageState extends State<InvoicePage> {
             decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)),
             child: Column(
               children: [
-                _sum('Subtotal', money(subtotal)),
-                _sum('Discount', money(discount)),
-                _sum('Taxable', money(taxable)),
-                _sum('GST', money(gstTotal)),
+                _sum(tr('Subtotal'), money(subtotal)),
+                _sum(tr('Discount'), money(discount)),
+                _sum(tr('Taxable'), money(taxable)),
+                _sum(tr('GST'), money(gstTotal)),
                 const Divider(),
-                _sum('Grand Total', money(total), bold: true),
-                _sum('Due', money((total - paidAmount).clamp(0, double.infinity)), color: Colors.red),
+                _sum(tr('Grand Total'), money(total), bold: true),
+                _sum(tr('Due'), money((total - paidAmount).clamp(0, double.infinity)), color: Colors.red),
               ],
             ),
           ),
@@ -1231,7 +1366,7 @@ Future<void> productDialog(BuildContext context, Database db, {VoidCallback? onS
 }
 
 Future<int?> partyPicker(BuildContext context, Database db, String type) async {
-  final rows = await db.query('parties', where: "type=? OR type='both'", whereArgs: [type], orderBy: 'name');
+  final rows = await db.query('parties', where: "LOWER(type)=LOWER(?) OR LOWER(type)='both'", whereArgs: [type], orderBy: 'name');
   String query = '';
   return showDialog<int?>(
     context: context,
@@ -1243,7 +1378,7 @@ Future<int?> partyPicker(BuildContext context, Database db, String type) async {
         }).toList();
         return AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-          title: Text(type == 'supplier' ? 'Select Supplier' : 'Select Customer', style: const TextStyle(fontWeight: FontWeight.w900)),
+          title: Text(tr(type == 'supplier' ? 'Select Supplier' : 'Select Customer'), style: const TextStyle(fontWeight: FontWeight.w900)),
           content: SizedBox(
             width: 420, height: 420,
             child: Column(children: [
@@ -1266,7 +1401,7 @@ Future<int?> partyPicker(BuildContext context, Database db, String type) async {
                   )),
             ]),
           ),
-          actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel'))],
+          actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: Text(tr('Cancel')))],
         );
       },
     ),
@@ -1557,6 +1692,9 @@ Future<void> exportPdf(BuildContext context, Database db) async {
     final ex = (await db.rawQuery('SELECT COALESCE(SUM(amount),0) total FROM expenses')).first;
     final result = (s['taxable'] as num).toDouble() - (cogs['total'] as num).toDouble() - (ex['total'] as num).toDouble();
     final doc = pw.Document();
+    final pdfFont = await PdfGoogleFonts.notoSansRegular();
+    final pdfBold = await PdfGoogleFonts.notoSansBold();
+    final pdfTheme = pw.ThemeData.withFont(base: pdfFont, bold: pdfBold);
 
     doc.addPage(
       pw.MultiPage(
@@ -1616,8 +1754,11 @@ Future<void> invoicePdf(BuildContext context, Database db, int id, bool purchase
     final muted = PdfColor.fromHex('#6F7382');
 
     final doc = pw.Document();
+    final pdfFont = await PdfGoogleFonts.notoSansRegular();
+    final pdfBold = await PdfGoogleFonts.notoSansBold();
+    final pdfTheme = pw.ThemeData.withFont(base: pdfFont, bold: pdfBold);
     doc.addPage(
-      pw.MultiPage(
+      pw.MultiPage(theme: pdfTheme,
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(28),
         footer: (ctx) => pw.Container(
