@@ -135,16 +135,14 @@ Future<void> smsReminderBackgroundCallback() async {
       final shop = (business['name'] ?? 'our shop').toString();
       final amount = balance.toStringAsFixed(2);
       try {
-        final sent = await PaymentSmsReminderService.sendDueReminder(
-          phone: phone,
-          customerName: name,
-          businessName: shop,
-          amount: amount,
-          dueDate: DateFormat('dd MMM yyyy').format(dueDate),
-          overdue: dueDate.isBefore(DateTime(todayDate.year, todayDate.month, todayDate.day)),
-        );
-        if (!sent) continue;
-        await db.insert('sms_reminder_log', {'log_key': logKey, 'party_id': partyId, 'sent_date': todayKey});
+        try {
+          await Telephony.backgroundInstance.sendSms(
+            to: phone,
+            message: 'Dear $name, your payment of Rs. $amount is due at $shop. Please make the payment at your convenience. Thank you.',
+            isMultipart: true,
+          );
+          await db.insert('sms_reminder_log', {'log_key': logKey, 'party_id': partyId, 'sent_date': todayKey});
+        } catch (_) {}
       } catch (_) {}
     }
     await syncSmsReminderAlarm(db);
@@ -1935,13 +1933,7 @@ class _PartiesPageState extends State<PartiesPage> {
                             ),
                             title: Text(x['name'].toString(), style: const TextStyle(fontWeight: FontWeight.w800)),
                             subtitle: Text('${(x['phone'] ?? '').toString()} • $ratingText\\n${due > 0.01 ? 'Due ${money(due)}' : 'No current due'}', maxLines: 2),
-                            trailing: due > 0.01
-                                ? IconButton(
-                                    tooltip: 'Message about due',
-                                    icon: const Icon(Icons.chat_rounded),
-                                    onPressed: rating == null ? null : () => _openCustomerMessage(context, x, rating, whatsapp: true),
-                                  )
-                                : Text(money(due), style: const TextStyle(fontWeight: FontWeight.w900)),
+                            trailing: Text(money(due), style: const TextStyle(fontWeight: FontWeight.w900)),
                           ),
                         );
                       },
