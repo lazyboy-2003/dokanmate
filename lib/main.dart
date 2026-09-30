@@ -284,32 +284,32 @@ class _IntroPageState extends State<IntroPage> with SingleTickerProviderStateMix
                       const SizedBox(height: 22),
                       Text(
                         'DokanMate',
-                        style: GoogleFonts.spaceGrotesk(
+                        style: GoogleFonts.sora(
                           color: Colors.white,
-                          fontSize: 35,
+                          fontSize: 37,
                           fontWeight: FontWeight.w700,
-                          letterSpacing: 1.1,
-                          height: 1.05,
+                          letterSpacing: 1.4,
+                          height: 1.0,
                         ),
                       ),
-                      const SizedBox(height: 11),
+                      const SizedBox(height: 13),
                       Text(
                         'Made with love ❤️',
-                        style: GoogleFonts.dmSans(
-                          color: Colors.white.withOpacity(.96),
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                          letterSpacing: .25,
+                        style: GoogleFonts.manrope(
+                          color: Colors.white.withOpacity(.97),
+                          fontSize: 16.5,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: .1,
                         ),
                       ),
-                      const SizedBox(height: 6),
+                      const SizedBox(height: 7),
                       Text(
                         'Only for you',
-                        style: GoogleFonts.dmSans(
+                        style: GoogleFonts.manrope(
                           color: const Color(0xFFE0E7FF),
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w400,
-                          letterSpacing: .45,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          letterSpacing: .8,
                         ),
                       ),
                       const SizedBox(height: 34),
