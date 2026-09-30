@@ -18,6 +18,7 @@ import 'package:local_auth/local_auth.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 import 'package:telephony/telephony.dart';
+import 'payment_sms_reminder_service.dart';
 
 final ValueNotifier<String> appLanguage = ValueNotifier<String>('English');
 
@@ -112,8 +113,7 @@ Future<void> smsReminderBackgroundCallback() async {
       'WHERE s.party_id IS NOT NULL AND s.due > 0 AND LOWER(COALESCE(p.type, "")) IN ("customer","both") ORDER BY s.date ASC, s.id ASC'
     );
     final processed = <int>{};
-    final telephony = Telephony.backgroundInstance;
-    for (final row in rows) {
+      for (final row in rows) {
       final partyId = (row['party_id'] as num?)?.toInt();
       if (partyId == null || processed.contains(partyId)) continue;
       processed.add(partyId);
@@ -134,12 +134,20 @@ Future<void> smsReminderBackgroundCallback() async {
       final name = (row['name'] ?? 'Customer').toString();
       final shop = (business['name'] ?? 'our shop').toString();
       final amount = balance.toStringAsFixed(2);
-      final message = 'Dear $name, your payment of Rs. $amount is due at $shop. Please make the payment at your convenience. Thank you.';
       try {
-        await telephony.sendSms(to: phone, message: message, isMultipart: true);
+        final sent = await PaymentSmsReminderService.sendDueReminder(
+          phone: phone,
+          customerName: name,
+          businessName: shop,
+          amount: amount,
+          dueDate: DateFormat('dd MMM yyyy').format(dueDate),
+          overdue: dueDate.isBefore(DateTime(todayDate.year, todayDate.month, todayDate.day)),
+        );
+        if (!sent) continue;
         await db.insert('sms_reminder_log', {'log_key': logKey, 'party_id': partyId, 'sent_date': todayKey});
       } catch (_) {}
     }
+    await syncSmsReminderAlarm(db);
     await db.close();
   } catch (_) {}
 }
@@ -1833,18 +1841,15 @@ Future<void> showCustomerDetails(BuildContext context, Database db, Map<String, 
             const SizedBox(height: 10),
             const Text('Message customer', style: TextStyle(fontWeight: FontWeight.w900)),
             const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(child: OutlinedButton.icon(
-                  icon: const Icon(Icons.chat_rounded),
-                  label: const Text('WhatsApp'),
-                )),
-                const SizedBox(width: 10),
-                Expanded(child: OutlinedButton.icon(
-                  icon: const Icon(Icons.sms_rounded),
-                  label: const Text('SMS'),
-                )),
-              ],
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                icon: const Icon(Icons.sms_rounded),
+                label: const Text('Send normal SMS reminder'),
+                onPressed: rating.currentDue <= 0.01
+                    ? null
+                    : () => _sendCustomerDueSms(context, db, party, rating),
+              ),
             ),
             if (rating.currentDue > 0.01)
               Padding(
@@ -1953,6 +1958,31 @@ class _PartiesPageState extends State<PartiesPage> {
 }
 
 
+Future<void> _sendCustomerDueSms(
+  BuildContext context,
+  Database db,
+  Map<String, Object?> party,
+  CustomerRating rating,
+) async {
+  final phone = (party['phone'] ?? '').toString().trim();
+  if (phone.isEmpty) {
+    await showMsg(context, 'This customer does not have a phone number.');
+    return;
+  }
+
+  final businessRows = await db.query('business', where: 'id=1', limit: 1);
+  final businessName = businessRows.isEmpty ? 'our shop' : (businessRows.first['name'] ?? 'our shop').toString();
+  final sent = await PaymentSmsReminderService.sendDueReminder(
+    phone: phone,
+    customerName: (party['name'] ?? 'Customer').toString(),
+    businessName: businessName,
+    amount: rating.currentDue.toStringAsFixed(2),
+    dueDate: DateFormat('dd MMM yyyy').format(DateTime.now()),
+    overdue: rating.overdueDays > 0,
+  );
+  if (!context.mounted) return;
+  await showMsg(context, sent ? 'SMS reminder sent successfully.' : 'SMS could not be sent. Please check SMS permission and the customer phone number.');
+}
 Future<void> securityDialog(BuildContext context) async {
   const storage = FlutterSecureStorage();
   final auth = LocalAuthentication();
