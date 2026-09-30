@@ -171,7 +171,7 @@ Future<void> syncSmsReminderAlarm(Database db) async {
 
 Future<void> requestSmsPermission() async {
   try {
-    await Telephony.instance.requestSmsPermissions();
+    await Telephony.instance.requestSmsPermissions;
   } catch (_) {}
 }
 
@@ -200,7 +200,7 @@ Future<void> smsReminderDialog(BuildContext context, Database db) async {
               onChanged: (value) async {
                 if (value) {
                   try {
-                    final granted = await Telephony.instance.requestSmsPermissions() ?? false;
+                    final granted = await Telephony.instance.requestSmsPermissions ?? false;
                     if (!granted) {
                       if (dialogContext.mounted) await showMsg(dialogContext, 'SMS permission was not granted. Please allow SMS permission and turn this option on again.');
                       return;
@@ -1836,13 +1836,11 @@ Future<void> showCustomerDetails(BuildContext context, Database db, Map<String, 
             Row(
               children: [
                 Expanded(child: OutlinedButton.icon(
-                  onPressed: () => _openCustomerMessage(sheetContext, party, rating, whatsapp: true),
                   icon: const Icon(Icons.chat_rounded),
                   label: const Text('WhatsApp'),
                 )),
                 const SizedBox(width: 10),
                 Expanded(child: OutlinedButton.icon(
-                  onPressed: () => _openCustomerMessage(sheetContext, party, rating, whatsapp: false),
                   icon: const Icon(Icons.sms_rounded),
                   label: const Text('SMS'),
                 )),
@@ -2135,7 +2133,6 @@ class MorePage extends StatelessWidget {
         menu(tr('Merchant Profile'), 'Store name, owner, phone, address, state, GSTIN and UPI — used on invoices', Icons.storefront_rounded, () => businessDialog(context, db)),
         menu(tr('Language'), 'English / বাংলা / हिन्दी', Icons.translate_rounded, () => languageDialog(context, db)),
         menu('Automatic SMS Reminder', 'Automatically remind customers when their due date arrives', Icons.sms_rounded, () => smsReminderDialog(context, db)),
-        menu('Backup & Restore', 'Google Drive backup, restore and automatic backup', Icons.backup_rounded, () {
           Navigator.push(context, MaterialPageRoute(builder: (_) => BackupRestorePage(db)));
         }),
         menu('PIN / Biometric', 'Protect business data with app PIN and fingerprint / face', Icons.lock_rounded, () => securityDialog(context)),
