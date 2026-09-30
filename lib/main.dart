@@ -251,6 +251,7 @@ class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
   final _auth = LocalAuthentication();
   bool loading = true;
   bool locked = false;
+  bool authenticating = false;
   String? error;
 
   @override
@@ -274,9 +275,10 @@ class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
   }
 
   Future<void> _checkLock({bool force = false}) async {
-    final enabled = await _storage.read(key: 'app_lock_enabled') == '1';
+    final pin = await _storage.read(key: 'app_pin');
+    final enabled = pin != null && pin.isNotEmpty;
     if (!enabled) {
-      if (mounted) setState(() { loading = false; locked = false; error = null; });
+      if (mounted) setState(() { loading = false; locked = false; });
       return;
     }
     if (!force && locked) return;
@@ -285,9 +287,14 @@ class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
   }
 
   Future<void> _authenticate() async {
+    if (authenticating || !mounted) return;
+    authenticating = true;
+
+    // First try biometric. Do NOT make the whole app depend on biometric
+    // configuration; PIN must remain an independent fallback.
     try {
-      final useBiometric = await _storage.read(key: 'app_biometric_enabled') == '1';
-      if (useBiometric) {
+      final biometricEnabled = await _storage.read(key: 'app_biometric_enabled') == '1';
+      if (biometricEnabled) {
         final supported = await _auth.isDeviceSupported();
         final available = await _auth.getAvailableBiometrics();
         if (supported && available.isNotEmpty) {
@@ -296,52 +303,103 @@ class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
             options: const AuthenticationOptions(
               biometricOnly: true,
               stickyAuth: true,
+              useErrorDialogs: true,
             ),
           );
-          if (ok) {
-            if (mounted) setState(() { locked = false; error = null; });
+          if (ok && mounted) {
+            authenticating = false;
+            setState(() { locked = false; error = null; });
             return;
           }
         }
       }
-    } catch (_) {}
-
-    if (!mounted) return;
-    final pin = await _storage.read(key: 'app_pin');
-    if (pin == null || pin.isEmpty) {
-      setState(() { locked = false; error = null; });
-      return;
+    } catch (_) {
+      // Ignore biometric errors and always fall back to app PIN.
     }
+
+    authenticating = false;
+    if (!mounted) return;
+    await _showPinDialog();
+  }
+
+  Future<void> _showPinDialog() async {
+    final pin = await _storage.read(key: 'app_pin');
+    if (pin == null || pin.isEmpty || !mounted) return;
+
     final controller = TextEditingController();
+    String? pinError;
+    bool checking = false;
+
     final ok = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: const Row(children: [Icon(Icons.lock_rounded), SizedBox(width: 8), Text('DokanMate Locked')]),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          keyboardType: TextInputType.number,
-          obscureText: true,
-          maxLength: 6,
-          decoration: const InputDecoration(labelText: 'Enter app PIN', prefixIcon: Icon(Icons.password_rounded)),
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, controller.text == pin),
-            child: const Text('Unlock'),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Row(children: [
+            Icon(Icons.lock_rounded),
+            SizedBox(width: 8),
+            Text('DokanMate Locked'),
+          ]),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            obscureText: true,
+            maxLength: 6,
+            onSubmitted: (_) async {
+              if (checking) return;
+              setDialogState(() => checking = true);
+              if (controller.text.trim() == pin) {
+                Navigator.pop(ctx, true);
+              } else {
+                setDialogState(() {
+                  checking = false;
+                  pinError = 'Incorrect PIN. Please try again.';
+                });
+                controller.clear();
+              }
+            },
+            decoration: InputDecoration(
+              labelText: 'Enter your PIN',
+              prefixIcon: const Icon(Icons.password_rounded),
+              errorText: pinError,
+            ),
           ),
-        ],
+          actions: [
+            TextButton(
+              onPressed: () {
+                controller.clear();
+                setDialogState(() => pinError = null);
+                Navigator.pop(ctx, false);
+              },
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: checking ? null : () async {
+                setDialogState(() => checking = true);
+                if (controller.text.trim() == pin) {
+                  Navigator.pop(ctx, true);
+                } else {
+                  setDialogState(() {
+                    checking = false;
+                    pinError = 'Incorrect PIN. Please try again.';
+                  });
+                  controller.clear();
+                }
+              },
+              child: const Text('Unlock'),
+            ),
+          ],
+        ),
       ),
     );
+
     controller.dispose();
     if (!mounted) return;
     if (ok == true) {
       setState(() { locked = false; error = null; });
     } else {
-      setState(() { locked = true; error = 'Incorrect PIN'; });
-      await Future.delayed(const Duration(milliseconds: 250));
-      if (mounted) _authenticate();
+      setState(() { locked = true; error = 'PIN required to unlock'; });
     }
   }
 
@@ -360,94 +418,22 @@ class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
             const SizedBox(height: 6),
             Text(error ?? 'Authenticate to continue', style: const TextStyle(color: Color(0xFF777B86))),
             const SizedBox(height: 18),
-            FilledButton.icon(onPressed: _authenticate, icon: const Icon(Icons.fingerprint_rounded), label: const Text('Unlock')),
+            FilledButton.icon(
+              onPressed: _authenticate,
+              icon: const Icon(Icons.fingerprint_rounded),
+              label: const Text('Fingerprint / PIN'),
+            ),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: _showPinDialog,
+              child: const Text('Use PIN'),
+            ),
           ],
         ),
       ),
     );
   }
 }
-
-Future<void> securityDialog(BuildContext context) async {
-  const storage = FlutterSecureStorage();
-  final auth = LocalAuthentication();
-  final currentPin = await storage.read(key: 'app_pin') ?? '';
-  final enabled = currentPin.isNotEmpty;
-  bool biometric = await storage.read(key: 'app_biometric_enabled') == '1';
-  final pin = TextEditingController();
-  final confirm = TextEditingController();
-
-  await showDialog(
-    context: context,
-    builder: (dialogContext) => StatefulBuilder(
-      builder: (dialogContext, setState) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-        title: const Row(children: [Icon(Icons.security_rounded), SizedBox(width: 8), Text('PIN / Biometric')]),
-        content: SingleChildScrollView(
-          child: Column(
-            children: [
-              Text(enabled ? 'Change your 4–6 digit app PIN or update biometric unlock.' : 'Set a 4–6 digit PIN to protect your business data.', style: const TextStyle(fontSize: 12, color: Color(0xFF777B86))),
-              const SizedBox(height: 14),
-              TextField(controller: pin, keyboardType: TextInputType.number, obscureText: true, maxLength: 6, decoration: const InputDecoration(labelText: 'New PIN', prefixIcon: Icon(Icons.password_rounded))),
-              TextField(controller: confirm, keyboardType: TextInputType.number, obscureText: true, maxLength: 6, decoration: const InputDecoration(labelText: 'Confirm PIN', prefixIcon: Icon(Icons.check_circle_outline_rounded))),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: biometric,
-                title: const Text('Biometric unlock'),
-                subtitle: const Text('Fingerprint / Face supported by your phone'),
-                secondary: const Icon(Icons.fingerprint_rounded),
-                onChanged: (v) async {
-                  if (!v) { setState(() => biometric = false); return; }
-                  try {
-                    final supported = await auth.isDeviceSupported();
-                    final available = await auth.getAvailableBiometrics();
-                    if (!supported || available.isEmpty) {
-                      if (dialogContext.mounted) showMsg(dialogContext, 'No enrolled fingerprint/face biometric is available on this phone.');
-                      return;
-                    }
-                    final ok = await auth.authenticate(
-                      localizedReason: 'Confirm biometric unlock for DokanMate',
-                      options: const AuthenticationOptions(biometricOnly: true),
-                    );
-                    if (ok) setState(() => biometric = true);
-                  } catch (_) {
-                    if (dialogContext.mounted) showMsg(dialogContext, 'Biometric setup failed. Please check your phone security settings.');
-                  }
-                },
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
-          FilledButton(
-            onPressed: () async {
-              final newPin = pin.text.trim();
-              final confirmPin = confirm.text.trim();
-              if (newPin.isNotEmpty && (newPin.length < 4 || newPin.length > 6 || int.tryParse(newPin) == null)) {
-                showMsg(dialogContext, 'PIN must contain 4–6 digits.'); return;
-              }
-              if (newPin.isNotEmpty && newPin != confirmPin) {
-                showMsg(dialogContext, 'PIN confirmation does not match.'); return;
-              }
-              if (!enabled && newPin.isEmpty) {
-                showMsg(dialogContext, 'Please set a PIN first.'); return;
-              }
-              final finalPin = newPin.isNotEmpty ? newPin : currentPin;
-              await storage.write(key: 'app_pin', value: finalPin);
-              await storage.write(key: 'app_lock_enabled', value: '1');
-              await storage.write(key: 'app_biometric_enabled', value: biometric ? '1' : '0');
-              if (dialogContext.mounted) Navigator.pop(dialogContext);
-              if (context.mounted) showMsg(context, biometric ? 'PIN and biometric lock enabled.' : 'PIN lock enabled.');
-            },
-            child: Text(enabled ? 'Update Security' : 'Enable Lock'),
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
 
 class IntroPage extends StatefulWidget {
   const IntroPage({super.key});
