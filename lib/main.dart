@@ -284,11 +284,11 @@ class _IntroPageState extends State<IntroPage> with SingleTickerProviderStateMix
                       const SizedBox(height: 22),
                       Text(
                         'DokanMate',
-                        style: GoogleFonts.sora(
+                        style: GoogleFonts.satisfy(
                           color: Colors.white,
-                          fontSize: 37,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 1.4,
+                          fontSize: 43,
+                          fontWeight: FontWeight.w400,
+                          letterSpacing: 0.6,
                           height: 1.0,
                         ),
                       ),
