@@ -324,14 +324,6 @@ class _BackupRestorePageState extends State<BackupRestorePage> {
   }
 
   Future<void> _restore() async {
-    if (email == null) {
-      await _run(
-        () async => DokanMateBackupService.restore(widget.db),
-        'Data restored successfully.',
-      );
-      return;
-    }
-
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
