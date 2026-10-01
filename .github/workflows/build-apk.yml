@@ -25,11 +25,12 @@ jobs:
           p = Path("android/app/build.gradle.kts")
           s = p.read_text()
           s = s.replace('ndkVersion = flutter.ndkVersion', 'ndkVersion = "27.0.12077973"')
+          s = s.replace('minSdk = flutter.minSdkVersion', 'minSdk = 23')
           if 'minSdk = 23' not in s:
               s = s.replace('defaultConfig {', 'defaultConfig {\n        minSdk = 23', 1)
           p.write_text(s)
-          print(p.read_text())
           PY
+          grep -n "minSdk" android/app/build.gradle.kts
       - name: Configure biometric activity and permissions
         run: |
           ACTIVITY=$(find android/app/src/main -name MainActivity.kt | head -n 1)
@@ -52,8 +53,6 @@ jobs:
           if [ -n "$TGRADLE" ]; then
             sed -i '/android {/a\    namespace "com.shounakmulay.telephony"' "$TGRADLE"
           fi
-      - name: Verify Android min SDK
-        run: grep -n "minSdk" android/app/build.gradle.kts
       - name: Build release APK
         run: flutter build apk --release
       - name: Upload APK
