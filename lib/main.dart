@@ -122,7 +122,9 @@ Future<void> smsReminderBackgroundCallback() async {
       final saleDate = _parseDate(row['date']?.toString());
       if (saleDate == null) continue;
       final creditDays = (row['credit_days'] as num?)?.toInt() ?? 0;
-      final dueDate = DateTime(saleDate.year, saleDate.month, saleDate.day + creditDays);
+      final baseDueDate = DateTime(saleDate.year, saleDate.month, saleDate.day + creditDays);
+      final delayDays = ((business['sms_reminder_delay_days'] as num?) ?? 0).toInt();
+      final dueDate = baseDueDate.add(Duration(days: delayDays));
       if (dueDate.isAfter(todayDate)) continue;
       final logKey = '${partyId}_${DateFormat('yyyyMMdd').format(dueDate)}';
       final already = await db.query('sms_reminder_log', where: 'log_key=?', whereArgs: [logKey], limit: 1);
@@ -141,7 +143,18 @@ Future<void> smsReminderBackgroundCallback() async {
             message: 'Dear $name, your payment of Rs. $amount is due at $shop. Please make the payment at your convenience. Thank you.',
             isMultipart: true,
           );
-          await db.insert('sms_reminder_log', {'log_key': logKey, 'party_id': partyId, 'sent_date': todayKey});
+          await db.insert('sms_reminder_log', {
+            'log_key': logKey,
+            'party_id': partyId,
+            'sent_date': todayKey,
+            'sent_at': DateTime.now().toIso8601String(),
+            'phone': phone,
+            'customer_name': name,
+            'amount': balance,
+            'due_date': DateFormat('yyyy-MM-dd').format(dueDate),
+            'status': 'sent',
+            'error': '',
+          });
         } catch (_) {}
       } catch (_) {}
     }
@@ -188,6 +201,7 @@ Future<void> smsReminderDialog(BuildContext context, Database db) async {
   bool enabled = ((b['auto_sms_reminder'] as num?) ?? 0).toInt() == 1;
   int hour = ((b['sms_reminder_hour'] as num?) ?? 10).toInt();
   int minute = ((b['sms_reminder_minute'] as num?) ?? 0).toInt();
+  int delayDays = ((b['sms_reminder_delay_days'] as num?) ?? 0).toInt();
 
   await showDialog(
     context: context,
@@ -243,6 +257,47 @@ Future<void> smsReminderDialog(BuildContext context, Database db) async {
                 if (enabled) await syncSmsReminderAlarm(db);
               },
             ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.timelapse_rounded),
+              title: const Text('When should SMS be sent?'),
+              subtitle: Text(
+                delayDays == 0
+                    ? 'On the due date'
+                    : '$delayDays day${delayDays == 1 ? '' : 's'} after the due date',
+              ),
+              onTap: () async {
+                final selected = await showDialog<int>(
+                  context: dialogContext,
+                  builder: (c) => SimpleDialog(
+                    title: const Text('SMS timing'),
+                    children: [
+                      for (final d in [0, 1, 2, 3])
+                        SimpleDialogOption(
+                          onPressed: () => Navigator.pop(c, d),
+                          child: Text(d == 0
+                              ? 'On the due date'
+                              : '$d day${d == 1 ? '' : 's'} after the due date'),
+                        ),
+                    ],
+                  ),
+                );
+                if (selected == null) return;
+                delayDays = selected;
+                await db.update('business', {'sms_reminder_delay_days': delayDays}, where: 'id=1');
+                setState(() {});
+                if (enabled) await syncSmsReminderAlarm(db);
+              },
+            ),
+            const SizedBox(height: 8),
+            FilledButton.icon(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                smsScheduleHistoryDialog(context, db);
+              },
+              icon: const Icon(Icons.history_rounded),
+              label: const Text('View SMS schedule & history'),
+            ),
             const SizedBox(height: 8),
             const Align(
               alignment: Alignment.centerLeft,
@@ -257,6 +312,119 @@ Future<void> smsReminderDialog(BuildContext context, Database db) async {
           TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close')),
         ],
       ),
+    ),
+  );
+}
+
+
+Future<void> smsScheduleHistoryDialog(BuildContext context, Database db) async {
+  final businessRows = await db.query('business', where: 'id=1');
+  final business = businessRows.isEmpty ? <String, Object?>{} : businessRows.first;
+  final hour = ((business['sms_reminder_hour'] as num?) ?? 10).toInt();
+  final minute = ((business['sms_reminder_minute'] as num?) ?? 0).toInt();
+  final delayDays = ((business['sms_reminder_delay_days'] as num?) ?? 0).toInt();
+
+  final rows = await db.rawQuery(
+    'SELECT s.party_id, s.date, s.due, p.name, p.phone, p.credit_days, p.balance '
+    'FROM sales s JOIN parties p ON p.id=s.party_id '
+    'WHERE s.party_id IS NOT NULL AND s.due > 0 '
+    'AND LOWER(COALESCE(p.type, "")) IN ("customer","both") '
+    'ORDER BY s.date ASC, s.id ASC'
+  );
+
+  final schedules = <Map<String, Object?>>[];
+  final seen = <int>{};
+  final now = DateTime.now();
+
+  for (final row in rows) {
+    final partyId = (row['party_id'] as num?)?.toInt();
+    if (partyId == null || seen.contains(partyId)) continue;
+    seen.add(partyId);
+    final balance = ((row['balance'] as num?) ?? 0).toDouble();
+    if (balance <= 0.01) continue;
+    final saleDate = _parseDate(row['date']?.toString());
+    if (saleDate == null) continue;
+    final creditDays = (row['credit_days'] as num?)?.toInt() ?? 0;
+    final dueDate = DateTime(saleDate.year, saleDate.month, saleDate.day + creditDays + delayDays, hour, minute);
+    final logKey = '${partyId}_${DateFormat('yyyyMMdd').format(DateTime(dueDate.year, dueDate.month, dueDate.day))}';
+    final sent = await db.query('sms_reminder_log', where: 'log_key=?', whereArgs: [logKey], limit: 1);
+    schedules.add({
+      'name': (row['name'] ?? 'Customer').toString(),
+      'phone': (row['phone'] ?? '').toString(),
+      'amount': balance,
+      'date': dueDate,
+      'sent': sent.isNotEmpty,
+      'isPast': !dueDate.isAfter(now),
+    });
+  }
+
+  final history = await db.query('sms_reminder_log', orderBy: 'sent_at DESC, id DESC', limit: 100);
+
+  if (!context.mounted) return;
+  await showDialog(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      title: const Text('SMS Schedule & History', style: TextStyle(fontWeight: FontWeight.w900)),
+      content: SizedBox(
+        width: double.maxFinite,
+        height: MediaQuery.of(context).size.height * .65,
+        child: DefaultTabController(
+          length: 2,
+          child: Column(
+            children: [
+              const TabBar(tabs: [Tab(text: 'Upcoming'), Tab(text: 'Sent history')]),
+              Expanded(
+                child: TabBarView(
+                  children: [
+                    schedules.isEmpty
+                        ? const Center(child: Text('No customer with pending due payment.'))
+                        : ListView.separated(
+                            itemCount: schedules.length,
+                            separatorBuilder: (_, __) => const Divider(height: 1),
+                            itemBuilder: (_, i) {
+                              final x = schedules[i];
+                              final d = x['date'] as DateTime;
+                              final sent = x['sent'] as bool;
+                              return ListTile(
+                                leading: CircleAvatar(child: Icon(sent ? Icons.check_rounded : Icons.sms_outlined)),
+                                title: Text(x['name'].toString(), style: const TextStyle(fontWeight: FontWeight.w800)),
+                                subtitle: Text(
+                                  '${money(x['amount'] as num)} • ${x['phone']}\n'
+                                  '${sent ? 'SMS already sent' : 'SMS scheduled'} • '
+                                  '${DateFormat('dd MMM yyyy, hh:mm a').format(d)}',
+                                ),
+                                isThreeLine: true,
+                              );
+                            },
+                          ),
+                    history.isEmpty
+                        ? const Center(child: Text('No automatic SMS sent yet.'))
+                        : ListView.separated(
+                            itemCount: history.length,
+                            separatorBuilder: (_, __) => const Divider(height: 1),
+                            itemBuilder: (_, i) {
+                              final x = history[i];
+                              final sentAt = _parseDate(x['sent_at']?.toString());
+                              return ListTile(
+                                leading: const CircleAvatar(child: Icon(Icons.done_rounded)),
+                                title: Text((x['customer_name'] ?? 'Customer').toString(), style: const TextStyle(fontWeight: FontWeight.w800)),
+                                subtitle: Text(
+                                  '${money(((x['amount'] as num?) ?? 0))} • ${(x['phone'] ?? '')}\n'
+                                  'Sent: ${sentAt == null ? (x['sent_date'] ?? '') : DateFormat('dd MMM yyyy, hh:mm a').format(sentAt)}',
+                                ),
+                                isThreeLine: true,
+                              );
+                            },
+                          ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close'))],
     ),
   );
 }
@@ -296,6 +464,25 @@ Future<void> ensureDb(Database db) async {
     await db.execute('ALTER TABLE business ADD COLUMN sms_reminder_minute INTEGER DEFAULT 0');
   }
   await db.execute('CREATE TABLE IF NOT EXISTS sms_reminder_log(id INTEGER PRIMARY KEY AUTOINCREMENT, log_key TEXT UNIQUE, party_id INTEGER, sent_date TEXT)');
+  final smsCols = await db.rawQuery('PRAGMA table_info(sms_reminder_log)');
+  final smsColumnDefs = <String, String>{
+    'sent_at': 'TEXT',
+    'phone': 'TEXT',
+    'customer_name': 'TEXT',
+    'amount': 'REAL',
+    'due_date': 'TEXT',
+    'status': 'TEXT DEFAULT "sent"',
+    'error': 'TEXT DEFAULT ""',
+  };
+  for (final entry in smsColumnDefs.entries) {
+    if (!smsCols.any((x) => x['name'].toString() == entry.key)) {
+      await db.execute('ALTER TABLE sms_reminder_log ADD COLUMN ${entry.key} ${entry.value}');
+    }
+  }
+  final businessCols2 = await db.rawQuery('PRAGMA table_info(business)');
+  if (!businessCols2.any((x) => x['name'].toString() == 'sms_reminder_delay_days')) {
+    await db.execute('ALTER TABLE business ADD COLUMN sms_reminder_delay_days INTEGER DEFAULT 0');
+  }
   final salesCols = await db.rawQuery('PRAGMA table_info(sales)');
   if (!salesCols.any((x) => x['name'].toString() == 'place_of_supply')) await db.execute('ALTER TABLE sales ADD COLUMN place_of_supply TEXT DEFAULT ""');
   final saleItemCols = await db.rawQuery('PRAGMA table_info(sale_items)');
@@ -2113,6 +2300,7 @@ class MorePage extends StatelessWidget {
         menu(tr('Merchant Profile'), 'Store name, owner, phone, address, state, GSTIN and UPI — used on invoices', Icons.storefront_rounded, () => businessDialog(context, db)),
         menu(tr('Language'), 'English / বাংলা / हिन्दी', Icons.translate_rounded, () => languageDialog(context, db)),
         menu('Automatic SMS Reminder', 'Automatically remind customers when their due date arrives', Icons.sms_rounded, () => smsReminderDialog(context, db)),
+        menu('SMS Schedule & History', 'See who will receive SMS, when, and past automatic SMS', Icons.history_rounded, () => smsScheduleHistoryDialog(context, db)),
         menu('PIN / Biometric', 'Protect business data with app PIN and fingerprint / face', Icons.lock_rounded, () => securityDialog(context)),
       ],
     );
