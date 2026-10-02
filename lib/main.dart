@@ -123,10 +123,10 @@ Future<void> smsReminderBackgroundCallback() async {
       final saleDate = _parseDate(row['date']?.toString());
       if (saleDate == null) continue;
       final creditDays = (row['credit_days'] as num?)?.toInt() ?? 0;
-      final delayDays = ((business['sms_reminder_delay_days'] as num?) ?? 0).toInt();
-      // Compare calendar dates, not the original sale's clock time. Otherwise a
-      // morning reminder can incorrectly wait until the original sale time.
-      final dueDate = DateTime(saleDate.year, saleDate.month, saleDate.day + creditDays + delayDays);
+      final delayMinutes = ((business['sms_reminder_delay_minutes'] as num?) ?? (((business['sms_reminder_delay_days'] as num?) ?? 0).toInt() * 1440)).toInt();
+      // Credit due date is a calendar date; the selected reminder delay is then
+      // applied in minutes, allowing 1-minute testing as well as 1-day reminders.
+      final dueDate = DateTime(saleDate.year, saleDate.month, saleDate.day + creditDays).add(Duration(minutes: delayMinutes));
       if (dueDate.isAfter(todayDate)) continue;
       final logKey = '${partyId}_${DateFormat('yyyyMMdd').format(dueDate)}';
       final already = await db.query('sms_reminder_log', where: 'log_key=?', whereArgs: [logKey], limit: 1);
