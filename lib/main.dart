@@ -220,6 +220,18 @@ Future<void> requestSmsPermission() async {
   } catch (_) {}
 }
 
+String _smsDelayLabel(int minutes) {
+  if (minutes < 60) return '$minutes minute${minutes == 1 ? '' : 's'} after due date';
+  if (minutes % 1440 == 0) {
+    final d = minutes ~/ 1440;
+    return '$d day${d == 1 ? '' : 's'} after due date';
+  }
+  if (minutes % 60 == 0) {
+    final h = minutes ~/ 60;
+    return '$h hour${h == 1 ? '' : 's'} after due date';
+  }
+  return '$minutes minutes after due date';
+}
 Future<void> smsReminderDialog(BuildContext context, Database db) async {
   final rows = await db.query('business', where: 'id=1');
   if (rows.isEmpty) return;
@@ -227,7 +239,7 @@ Future<void> smsReminderDialog(BuildContext context, Database db) async {
   bool enabled = ((b['auto_sms_reminder'] as num?) ?? 0).toInt() == 1;
   int hour = ((b['sms_reminder_hour'] as num?) ?? 10).toInt();
   int minute = ((b['sms_reminder_minute'] as num?) ?? 0).toInt();
-  int delayDays = ((b['sms_reminder_delay_days'] as num?) ?? 0).toInt();
+  int delayMinutes = ((b['sms_reminder_delay_minutes'] as num?) ?? (((b['sms_reminder_delay_days'] as num?) ?? 0).toInt() * 1440)).toInt();
 
   await showDialog(
     context: context,
@@ -301,30 +313,40 @@ Future<void> smsReminderDialog(BuildContext context, Database db) async {
               contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.timelapse_rounded),
               title: const Text('When should SMS be sent?'),
-              subtitle: Text(
-                delayDays == 0
-                    ? 'On the due date'
-                    : '$delayDays day${delayDays == 1 ? '' : 's'} after the due date',
-              ),
+              subtitle: Text(_smsDelayLabel(delayMinutes)),
               onTap: () async {
+                const options = <Map<String, int>>[
+                  {'label': '1 minute after due date', 'minutes': 1},
+                  {'label': '5 minutes after due date', 'minutes': 5},
+                  {'label': '10 minutes after due date', 'minutes': 10},
+                  {'label': '30 minutes after due date', 'minutes': 30},
+                  {'label': '1 hour after due date', 'minutes': 60},
+                  {'label': '3 hours after due date', 'minutes': 180},
+                  {'label': '6 hours after due date', 'minutes': 360},
+                  {'label': '12 hours after due date', 'minutes': 720},
+                  {'label': '1 day after due date', 'minutes': 1440},
+                  {'label': '2 days after due date', 'minutes': 2880},
+                  {'label': '3 days after due date', 'minutes': 4320},
+                ];
                 final selected = await showDialog<int>(
                   context: dialogContext,
                   builder: (c) => SimpleDialog(
                     title: const Text('SMS timing'),
                     children: [
-                      for (final d in [0, 1, 2, 3])
+                      for (final option in options)
                         SimpleDialogOption(
-                          onPressed: () => Navigator.pop(c, d),
-                          child: Text(d == 0
-                              ? 'On the due date'
-                              : '$d day${d == 1 ? '' : 's'} after the due date'),
+                          onPressed: () => Navigator.pop(c, option['minutes']),
+                          child: Text(option['label']!),
                         ),
                     ],
                   ),
                 );
                 if (selected == null) return;
-                delayDays = selected;
-                await db.update('business', {'sms_reminder_delay_days': delayDays}, where: 'id=1');
+                delayMinutes = selected;
+                await db.update('business', {
+                  'sms_reminder_delay_minutes': delayMinutes,
+                  'sms_reminder_delay_days': (delayMinutes / 1440).floor(),
+                }, where: 'id=1');
                 setState(() {});
                 if (enabled) await syncSmsReminderAlarm(db);
               },
