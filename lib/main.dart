@@ -122,13 +122,16 @@ Future<void> smsReminderBackgroundCallback() async {
       final saleDate = _parseDate(row['date']?.toString());
       if (saleDate == null) continue;
       final creditDays = (row['credit_days'] as num?)?.toInt() ?? 0;
-      final baseDueDate = DateTime(saleDate.year, saleDate.month, saleDate.day + creditDays);
       final delayDays = ((business['sms_reminder_delay_days'] as num?) ?? 0).toInt();
-      final dueDate = baseDueDate.add(Duration(days: delayDays));
+      // Compare calendar dates, not the original sale's clock time. Otherwise a
+      // morning reminder can incorrectly wait until the original sale time.
+      final dueDate = DateTime(saleDate.year, saleDate.month, saleDate.day + creditDays + delayDays);
       if (dueDate.isAfter(todayDate)) continue;
       final logKey = '${partyId}_${DateFormat('yyyyMMdd').format(dueDate)}';
       final already = await db.query('sms_reminder_log', where: 'log_key=?', whereArgs: [logKey], limit: 1);
-      if (already.isNotEmpty) continue;
+      // A failed attempt must be retried on the next alarm run; only a
+      // confirmed local send should suppress future retries for this due date.
+      if (already.isNotEmpty && (already.first['status'] ?? 'sent').toString() == 'sent') continue;
       final rawPhone = (row['phone'] ?? '').toString().trim();
       final digits = rawPhone.replaceAll(RegExp(r'[^0-9]'), '');
       if (digits.length < 10) continue;
@@ -137,26 +140,48 @@ Future<void> smsReminderBackgroundCallback() async {
       final shop = (business['name'] ?? 'our shop').toString();
       final amount = balance.toStringAsFixed(2);
       try {
-        try {
-          await Telephony.backgroundInstance.sendSms(
-            to: phone,
-            message: 'Dear $name, your payment of Rs. $amount is due at $shop. Please make the payment at your convenience. Thank you.',
-            isMultipart: true,
-          );
-          await db.insert('sms_reminder_log', {
-            'log_key': logKey,
-            'party_id': partyId,
-            'sent_date': todayKey,
-            'sent_at': DateTime.now().toIso8601String(),
-            'phone': phone,
-            'customer_name': name,
-            'amount': balance,
-            'due_date': DateFormat('yyyy-MM-dd').format(dueDate),
-            'status': 'sent',
-            'error': '',
-          });
-        } catch (_) {}
-      } catch (_) {}
+        await Telephony.backgroundInstance.sendSms(
+          to: phone,
+          message: 'Dear $name, your payment of Rs. $amount is due at $shop. Please make the payment at your convenience. Thank you.',
+          isMultipart: true,
+        );
+        final logData = {
+          'log_key': logKey,
+          'party_id': partyId,
+          'sent_date': todayKey,
+          'sent_at': DateTime.now().toIso8601String(),
+          'phone': phone,
+          'customer_name': name,
+          'amount': balance,
+          'due_date': DateFormat('yyyy-MM-dd').format(dueDate),
+          'status': 'sent',
+          'error': '',
+        };
+        if (already.isEmpty) {
+          await db.insert('sms_reminder_log', logData);
+        } else {
+          await db.update('sms_reminder_log', logData, where: 'log_key=?', whereArgs: [logKey]);
+        }
+      } catch (e) {
+        final errorText = e.toString();
+        final failedData = {
+          'log_key': logKey,
+          'party_id': partyId,
+          'sent_date': todayKey,
+          'sent_at': DateTime.now().toIso8601String(),
+          'phone': phone,
+          'customer_name': name,
+          'amount': balance,
+          'due_date': DateFormat('yyyy-MM-dd').format(dueDate),
+          'status': 'failed',
+          'error': errorText,
+        };
+        if (already.isEmpty) {
+          await db.insert('sms_reminder_log', failedData);
+        } else {
+          await db.update('sms_reminder_log', failedData, where: 'log_key=?', whereArgs: [logKey]);
+        }
+      }
     }
     await syncSmsReminderAlarm(db);
     await db.close();
@@ -407,11 +432,15 @@ Future<void> smsScheduleHistoryDialog(BuildContext context, Database db) async {
                               final x = history[i];
                               final sentAt = _parseDate(x['sent_at']?.toString());
                               return ListTile(
-                                leading: const CircleAvatar(child: Icon(Icons.done_rounded)),
+                                leading: CircleAvatar(
+                                  child: Icon((x['status'] ?? 'sent').toString() == 'sent' ? Icons.done_rounded : Icons.error_outline_rounded),
+                                ),
                                 title: Text((x['customer_name'] ?? 'Customer').toString(), style: const TextStyle(fontWeight: FontWeight.w800)),
                                 subtitle: Text(
                                   '${money(((x['amount'] as num?) ?? 0))} • ${(x['phone'] ?? '')}\n'
-                                  'Sent: ${sentAt == null ? (x['sent_date'] ?? '') : DateFormat('dd MMM yyyy, hh:mm a').format(sentAt)}',
+                                  '${(x['status'] ?? 'sent').toString() == 'sent' ? 'Submitted: ' : 'Failed: '}'
+                                  '${sentAt == null ? (x['sent_date'] ?? '') : DateFormat('dd MMM yyyy, hh:mm a').format(sentAt)}'
+                                  '${(x['status'] ?? 'sent').toString() == 'sent' ? '' : '\\nError: ${(x['error'] ?? 'Unknown error').toString()}'}',
                                 ),
                                 isThreeLine: true,
                               );
