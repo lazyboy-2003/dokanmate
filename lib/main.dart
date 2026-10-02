@@ -18,6 +18,7 @@ import 'package:local_auth/local_auth.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 import 'package:telephony/telephony.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'payment_sms_reminder_service.dart';
 
 final ValueNotifier<String> appLanguage = ValueNotifier<String>('English');
@@ -252,6 +253,20 @@ Future<void> smsReminderDialog(BuildContext context, Database db) async {
                     }
                   } catch (_) {
                     if (dialogContext.mounted) await showMsg(dialogContext, 'SMS permission could not be requested on this phone.');
+                    return;
+                  }
+                  try {
+                    final exactStatus = await Permission.scheduleExactAlarm.request();
+                    if (!exactStatus.isGranted) {
+                      if (dialogContext.mounted) {
+                        await showMsg(dialogContext, 'Exact alarm permission is required for automatic SMS at the selected time. Please allow it and turn the reminder on again.');
+                      }
+                      return;
+                    }
+                  } catch (_) {
+                    if (dialogContext.mounted) {
+                      await showMsg(dialogContext, 'Exact alarm permission could not be checked on this phone.');
+                    }
                     return;
                   }
                 }
