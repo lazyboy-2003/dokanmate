@@ -315,7 +315,7 @@ Future<void> smsReminderDialog(BuildContext context, Database db) async {
               title: const Text('When should SMS be sent?'),
               subtitle: Text(_smsDelayLabel(delayMinutes)),
               onTap: () async {
-                const options = <Map<String, int>>[
+                const options = <Map<String, dynamic>>[
                   {'label': '1 minute after due date', 'minutes': 1},
                   {'label': '5 minutes after due date', 'minutes': 5},
                   {'label': '10 minutes after due date', 'minutes': 10},
@@ -335,8 +335,8 @@ Future<void> smsReminderDialog(BuildContext context, Database db) async {
                     children: [
                       for (final option in options)
                         SimpleDialogOption(
-                          onPressed: () => Navigator.pop(c, option['minutes']),
-                          child: Text(option['label']!),
+                          onPressed: () => Navigator.pop(c, option['minutes'] as int),
+                          child: Text(option['label'] as String),
                         ),
                     ],
                   ),
