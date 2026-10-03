@@ -549,6 +549,13 @@ Future<void> ensureDb(Database db) async {
   if (!businessCols2.any((x) => x['name'].toString() == 'sms_reminder_delay_days')) {
     await db.execute('ALTER TABLE business ADD COLUMN sms_reminder_delay_days INTEGER DEFAULT 0');
   }
+  final businessCols3 = await db.rawQuery('PRAGMA table_info(business)');
+  if (!businessCols3.any((x) => x['name'].toString() == 'sms_reminder_delay_minutes')) {
+    await db.execute('ALTER TABLE business ADD COLUMN sms_reminder_delay_minutes INTEGER DEFAULT 0');
+    final legacyRows = await db.query('business', where: 'id=1', columns: ['sms_reminder_delay_days']);
+    final legacyDelay = legacyRows.isEmpty ? 0 : ((legacyRows.first['sms_reminder_delay_days'] as num?) ?? 0).toInt();
+    await db.update('business', {'sms_reminder_delay_minutes': legacyDelay * 1440}, where: 'id=1');
+  }
   final salesCols = await db.rawQuery('PRAGMA table_info(sales)');
   if (!salesCols.any((x) => x['name'].toString() == 'place_of_supply')) await db.execute('ALTER TABLE sales ADD COLUMN place_of_supply TEXT DEFAULT ""');
   final saleItemCols = await db.rawQuery('PRAGMA table_info(sale_items)');
@@ -677,12 +684,19 @@ class LockGate extends StatefulWidget {
   final Database db;
   final Widget child;
   const LockGate({required this.db, required this.child, super.key});
+
   @override
   State<LockGate> createState() => _LockGateState();
 }
 
 class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
   static const _storage = FlutterSecureStorage();
+  static const _failKey = 'app_pin_failed_attempts';
+  static const _lockUntilKey = 'app_pin_lock_until';
+  static const int _maxAttemptsBeforeLock = 5;
+  static const Duration _baseLockout = Duration(seconds: 30);
+  static const Duration _maxLockout = Duration(minutes: 15);
+
   final _auth = LocalAuthentication();
   bool loading = true;
   bool locked = false;
@@ -704,8 +718,6 @@ class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Do not start a second biometric prompt while the first system prompt
-    // is active. The biometric dialog itself can temporarily change lifecycle.
     if (state == AppLifecycleState.resumed && !loading && !authenticating) {
       Future<void>.delayed(const Duration(milliseconds: 350), () {
         if (mounted && !authenticating && locked) {
@@ -715,10 +727,49 @@ class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
     }
   }
 
+  Future<Duration?> _remainingLockout() async {
+    final raw = await _storage.read(key: _lockUntilKey);
+    if (raw == null || raw.isEmpty) return null;
+    final until = DateTime.tryParse(raw);
+    if (until == null) {
+      await _storage.delete(key: _lockUntilKey);
+      return null;
+    }
+    final remaining = until.difference(DateTime.now());
+    if (remaining <= Duration.zero) {
+      await _storage.delete(key: _lockUntilKey);
+      await _storage.write(key: _failKey, value: '0');
+      return null;
+    }
+    return remaining;
+  }
+
+  Future<void> _recordFailedPin() async {
+    final current = int.tryParse(await _storage.read(key: _failKey) ?? '0') ?? 0;
+    final failures = current + 1;
+    await _storage.write(key: _failKey, value: failures.toString());
+    if (failures < _maxAttemptsBeforeLock) return;
+
+    final lockStep = (failures - _maxAttemptsBeforeLock).clamp(0, 4);
+    final seconds = (_baseLockout.inSeconds * (1 << lockStep))
+        .clamp(_baseLockout.inSeconds, _maxLockout.inSeconds)
+        .toInt();
+    await _storage.write(
+      key: _lockUntilKey,
+      value: DateTime.now().add(Duration(seconds: seconds)).toIso8601String(),
+    );
+  }
+
+  Future<void> _clearPinFailures() async {
+    await _storage.delete(key: _failKey);
+    await _storage.delete(key: _lockUntilKey);
+  }
+
   Future<void> _checkLock({bool force = false}) async {
     final pin = await _storage.read(key: 'app_pin');
     final enabled = pin != null && pin.isNotEmpty;
     if (!enabled) {
+      await _clearPinFailures();
       if (mounted) setState(() { loading = false; locked = false; });
       return;
     }
@@ -736,9 +787,6 @@ class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
           await _storage.read(key: 'app_biometric_enabled') == '1';
 
       if (biometricEnabled) {
-        // Do not gate authentication on getAvailableBiometrics(). On some
-        // Android/OEM combinations that list can be empty even though the
-        // system biometric prompt is usable.
         final supported = await _auth.isDeviceSupported();
         final canCheck = await _auth.canCheckBiometrics;
 
@@ -753,15 +801,14 @@ class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
           );
 
           if (ok && mounted) {
+            await _clearPinFailures();
             authenticating = false;
             setState(() { locked = false; error = null; });
             return;
           }
         }
       }
-    } catch (e) {
-      // PIN is always available as a fallback. Keep the actual error for
-      // diagnostics instead of silently hiding a biometric integration issue.
+    } catch (_) {
       error = 'Biometric authentication unavailable';
     }
 
@@ -773,6 +820,17 @@ class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
   Future<void> _showPinDialog() async {
     final pin = await _storage.read(key: 'app_pin');
     if (pin == null || pin.isEmpty || !mounted) return;
+
+    final remaining = await _remainingLockout();
+    if (remaining != null) {
+      if (mounted) {
+        setState(() {
+          locked = true;
+          error = 'Too many incorrect PIN attempts. Try again in ${remaining.inSeconds + 1s.';
+        });
+      }
+      return;
+    }
 
     final controller = TextEditingController();
     String? pinError;
@@ -798,11 +856,16 @@ class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
               if (checking) return;
               setDialogState(() => checking = true);
               if (controller.text.trim() == pin) {
-                Navigator.pop(ctx, true);
+                await _clearPinFailures();
+                if (ctx.mounted) Navigator.pop(ctx, true);
               } else {
+                await _recordFailedPin();
+                final lock = await _remainingLockout();
                 setDialogState(() {
                   checking = false;
-                  pinError = 'Incorrect PIN. Please try again.';
+                  pinError = lock == null
+                      ? 'Incorrect PIN. Please try again.'
+                      : 'Too many attempts. Try again in ${lock.inSeconds + 1s.';
                 });
                 controller.clear();
               }
@@ -826,11 +889,16 @@ class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
               onPressed: checking ? null : () async {
                 setDialogState(() => checking = true);
                 if (controller.text.trim() == pin) {
-                  Navigator.pop(ctx, true);
+                  await _clearPinFailures();
+                  if (ctx.mounted) Navigator.pop(ctx, true);
                 } else {
+                  await _recordFailedPin();
+                  final lock = await _remainingLockout();
                   setDialogState(() {
                     checking = false;
-                    pinError = 'Incorrect PIN. Please try again.';
+                    pinError = lock == null
+                        ? 'Incorrect PIN. Please try again.'
+                        : 'Too many attempts. Try again in ${lock.inSeconds + 1s.';
                   });
                   controller.clear();
                 }
@@ -845,6 +913,7 @@ class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
     controller.dispose();
     if (!mounted) return;
     if (ok == true) {
+      await _clearPinFailures();
       setState(() { locked = false; error = null; });
     } else {
       setState(() { locked = true; error = 'PIN required to unlock'; });
@@ -2227,6 +2296,8 @@ Future<void> securityDialog(BuildContext context) async {
       currentPin = value;
       await storage.write(key: 'app_pin', value: value);
       await storage.write(key: 'app_lock_enabled', value: '1');
+      await storage.delete(key: 'app_pin_failed_attempts');
+      await storage.delete(key: 'app_pin_lock_until');
     }
   }
 
