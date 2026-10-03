@@ -826,7 +826,7 @@ class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
       if (mounted) {
         setState(() {
           locked = true;
-          error = 'Too many incorrect PIN attempts. Try again in ${remaining.inSeconds + 1s.';
+          error = 'Too many incorrect PIN attempts. Try again in ${remaining.inSeconds + 1}s.';
         });
       }
       return;
@@ -865,7 +865,7 @@ class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
                   checking = false;
                   pinError = lock == null
                       ? 'Incorrect PIN. Please try again.'
-                      : 'Too many attempts. Try again in ${lock.inSeconds + 1s.';
+                      : 'Too many attempts. Try again in ${lock.inSeconds + 1}s.';
                 });
                 controller.clear();
               }
@@ -898,7 +898,7 @@ class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
                     checking = false;
                     pinError = lock == null
                         ? 'Incorrect PIN. Please try again.'
-                        : 'Too many attempts. Try again in ${lock.inSeconds + 1s.';
+                        : 'Too many attempts. Try again in ${lock.inSeconds + 1}s.';
                   });
                   controller.clear();
                 }
