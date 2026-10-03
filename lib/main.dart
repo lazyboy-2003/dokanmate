@@ -752,7 +752,8 @@ class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
 
     final lockStep = (failures - _maxAttemptsBeforeLock).clamp(0, 4);
     final seconds = (_baseLockout.inSeconds * (1 << lockStep))
-        .clamp(_baseLockout.inSeconds, _maxLockout.inSeconds);
+        .clamp(_baseLockout.inSeconds, _maxLockout.inSeconds)
+        .toInt();
     await _storage.write(
       key: _lockUntilKey,
       value: DateTime.now().add(Duration(seconds: seconds)).toIso8601String(),
@@ -825,7 +826,7 @@ class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
       if (mounted) {
         setState(() {
           locked = true;
-          error = 'Too many incorrect PIN attempts. Try again in \${remaining.inSeconds + 1s.';
+          error = 'Too many incorrect PIN attempts. Try again in ${remaining.inSeconds + 1s.';
         });
       }
       return;
@@ -864,7 +865,7 @@ class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
                   checking = false;
                   pinError = lock == null
                       ? 'Incorrect PIN. Please try again.'
-                      : 'Too many attempts. Try again in \${lock.inSeconds + 1s.';
+                      : 'Too many attempts. Try again in ${lock.inSeconds + 1s.';
                 });
                 controller.clear();
               }
@@ -897,7 +898,7 @@ class _LockGateState extends State<LockGate> with WidgetsBindingObserver {
                     checking = false;
                     pinError = lock == null
                         ? 'Incorrect PIN. Please try again.'
-                        : 'Too many attempts. Try again in \${lock.inSeconds + 1s.';
+                        : 'Too many attempts. Try again in ${lock.inSeconds + 1s.';
                   });
                   controller.clear();
                 }
